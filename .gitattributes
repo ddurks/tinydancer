@@ -1,0 +1,12 @@
+# Normalize line endings. Shell scripts MUST stay LF — they run on the Linux
+# GPU box and CRLF would break the shebang/heredocs.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.py   text eol=lf
+
+# Binary assets — never touch line endings or try to diff.
+*.mp4   binary
+*.bvh   binary
+*.blend binary
+*.npz   binary
+*.pkl   binary
