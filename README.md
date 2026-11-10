@@ -64,6 +64,7 @@ Put `WHAM_Source` and your rig in one `.blend`, run `check_rig.py` to get a
 ```bash
 blender --background scene.blend --python retarget.py -- --map my_map.py [flags]
 ```
+- `--target NAME` — the rig to retarget onto; required when the file has several armatures.
 - `--action NAME` — key into a new action instead of touching the rig's existing ones.
 - `--root-scale auto|<float>` — scale root travel; `auto` = target/source leg-length ratio
   (for rigs that aren't human-proportioned).

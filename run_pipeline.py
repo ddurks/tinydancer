@@ -209,7 +209,10 @@ def extract_motion(pt_path, frame="global"):
     data = torch.load(str(pt_path), map_location="cpu", weights_only=False)
 
     key = f"smpl_params_{frame}"
-    params = data.get(key) or data["smpl_params_global"]
+    params = data.get(key)
+    if params is None:
+        print(f"WARNING: no {key} in {pt_path}; using smpl_params_global instead.")
+        params = data["smpl_params_global"]
 
     def to_np(x):
         return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)

@@ -5,7 +5,7 @@ pose: fast movement that snaps to a hold, from the GVHMR motion).
 
 Run (any machine; needs numpy, scipy, librosa, torch, and ffmpeg on PATH):
   python dance_cues.py <clip>.hmr4d_results.pt <clip audio or video> --out cues.json
-      [--start SEC] [--fps 30]
+      [--start SEC] [--fps N]
 
 --start trims the audio to where the clip (and so the motion) begins, when the
 audio comes from the untrimmed source video.
@@ -25,7 +25,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
 from scipy.spatial.transform import Rotation
 
-from run_pipeline import extract_motion
+from run_pipeline import extract_motion, video_fps
 
 
 def beat_times(audio_path, start, duration):
@@ -67,10 +67,17 @@ def main():
     ap.add_argument("pt", help="GVHMR hmr4d_results.pt for the clip")
     ap.add_argument("audio", help="Audio or video file with the clip's soundtrack")
     ap.add_argument("--start", type=float, default=0.0, help="Clip start within the audio (s)")
-    ap.add_argument("--fps", type=float, default=30.0, help="Frame rate of the motion")
+    ap.add_argument("--fps", type=float,
+                    help="Frame rate of the motion (default: read from the audio arg if it's a video)")
     ap.add_argument("--out", default="cues.json")
     args = ap.parse_args()
 
+    if not args.fps:
+        args.fps = video_fps(args.audio, default=None)
+        if not args.fps:
+            args.fps = 30.0
+            print("WARNING: couldn't read a frame rate from the audio arg; assuming 30 fps "
+                  "(pass --fps if the clip isn't 30).")
     poses, _ = extract_motion(args.pt)
     duration = len(poses) / args.fps
     tempo, beats = beat_times(args.audio, args.start, duration)

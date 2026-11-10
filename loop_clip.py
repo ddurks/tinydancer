@@ -10,7 +10,7 @@ beat / key-pose cues shifted to start at 0.
 
 Run (needs numpy, scipy, torch, soundfile, librosa; ffmpeg on PATH):
   python loop_clip.py <clip>.hmr4d_results.pt cues.json --out <clip>_loop.bvh
-      [--beats 8] [--fade 0.4] [--fps 30]
+      [--beats 8] [--fade 0.4] [--fps N]
       [--audio source.mp4 --audio-start 5.0 --audio-out loop.m4a]
       [--cues-out loop_cues.json] [--window-out window.json]
 
@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from run_pipeline import extract_motion, write_bvh
+from run_pipeline import extract_motion, video_fps, write_bvh
 
 
 def beat_grid(beats, duration):
@@ -74,16 +74,20 @@ def loop_audio(audio, start, length, fade, out):
 
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "a.wav"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(start - fade),
-                        "-t", str(length + fade), "-i", str(audio), "-vn", str(wav)], check=True)
+        pre_s = min(fade, start)               # can't fade in from before the audio starts
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(start - pre_s),
+                        "-t", str(length + pre_s), "-i", str(audio), "-vn", str(wav)], check=True)
         y, sr = librosa.load(wav, sr=None, mono=False)
         y = np.atleast_2d(y)
-        f = int(round(fade * sr))
+        f = int(round(pre_s * sr))
         n = int(round(length * sr))
+        if y.shape[1] < f + n:
+            raise SystemExit(f"Audio ends {(f + n - y.shape[1]) / sr:.2f}s before the loop does.")
         pre, body = y[:, :f], y[:, f:f + n].copy()
         # Equal-power crossfade of the tail into the audio just before the start.
-        w = np.sin(np.linspace(0, np.pi / 2, f))
-        body[:, -f:] = body[:, -f:] * np.cos(np.linspace(0, np.pi / 2, f)) + pre * w
+        if f:
+            w = np.sin(np.linspace(0, np.pi / 2, f))
+            body[:, -f:] = body[:, -f:] * np.cos(np.linspace(0, np.pi / 2, f)) + pre * w
         loop_wav = Path(tmp) / "loop.wav"
         sf.write(loop_wav, body.T, sr)
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(loop_wav),
@@ -97,7 +101,7 @@ def main():
     ap.add_argument("--out", required=True, help="Looped BVH")
     ap.add_argument("--beats", type=int, default=8, help="Loop length in beats")
     ap.add_argument("--fade", type=float, default=0.4, help="Seam crossfade (s)")
-    ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--fps", type=float, help="Default: read from --audio if it's a video")
     ap.add_argument("--audio")
     ap.add_argument("--audio-start", type=float, default=0.0)
     ap.add_argument("--audio-out")
@@ -105,6 +109,12 @@ def main():
     ap.add_argument("--window-out")
     args = ap.parse_args()
 
+    if not args.fps:
+        args.fps = video_fps(args.audio, default=None) if args.audio else None
+        if not args.fps:
+            args.fps = 30.0
+            print("WARNING: no frame rate from --audio; assuming 30 fps "
+                  "(pass --fps if the clip isn't 30).")
     poses, trans = extract_motion(args.pt)
     cues = json.loads(Path(args.cues).read_text())
     duration = len(poses) / args.fps

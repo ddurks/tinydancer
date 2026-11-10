@@ -17,6 +17,9 @@ the target bone's rest orientation, then keyframe. The root (Pelvis) also gets t
 source's translation. This is rest-pose-aware, so different proportions/bone
 directions are handled — what dedicated retargeters do internally.
 
+  --target NAME     the rig to retarget onto (required if the file has more than one
+                    armature besides WHAM_Source)
+
 Options for rigs that aren't human-proportioned (e.g. davebot):
   --action NAME     key into a NEW action NAME (leaves the rig's existing actions alone)
   --root-scale auto|<float>
@@ -106,8 +109,16 @@ def main(argv):
                          f"animation.blend, or import animation.bvh first.")
     tgts = [o for o in bpy.data.objects
             if o.type == "ARMATURE" and o.name != SOURCE_NAME]
+    target_name = flag(argv, "--target")
+    if target_name:
+        tgts = [o for o in tgts if o.name == target_name]
+        if not tgts:
+            raise SystemExit(f"No armature named '{target_name}'.")
     if not tgts:
         raise SystemExit("No target armature found alongside WHAM_Source.")
+    if len(tgts) > 1:
+        raise SystemExit("Several armatures besides WHAM_Source: "
+                         f"{', '.join(o.name for o in tgts)}. Pick one with --target NAME.")
     tgt = tgts[0]
     print(f"Source: {src.name}   Target: {tgt.name}")
 
