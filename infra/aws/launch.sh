@@ -56,20 +56,31 @@ OUT_BVH="${VIDEO_STEM}.bvh"
 
 # --- live watcher: stream run.log here until the BVH lands, then download it ---
 # Re-watch an in-progress run without relaunching:  WATCH_ONLY=1 bash infra/aws/launch.sh
+# Follow a run: a one-line progress bar (infra/aws/progress.py) by default, or
+# the raw log streamed as it grows with VERBOSE=1.
 watch_run() {
-  local bucket="$1" shown=0 total live
+  local bucket="$1" shown=0 total live since
+  since=$(aws ec2 describe-instances --region "$REGION" \
+    --filters "Name=tag:Name,Values=tinydancer" "Name=instance-state-name,Values=running,pending" \
+    --query 'Reservations[].Instances[].LaunchTime' --output text 2>/dev/null | head -1 | cut -c1-19)
+  since=$(python3 -c "import calendar,sys,time;print(calendar.timegm(time.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S')))" "$since" 2>/dev/null || date +%s)
   echo ""
-  echo ">>> Following s3://$bucket/run.log live — Ctrl-C to stop watching (the box keeps running)."
+  echo ">>> Following s3://$bucket/run.log — Ctrl-C to stop watching (the box keeps running)."
   echo ""
   while true; do
     if aws s3 cp "s3://$bucket/run.log" /tmp/td_watch.log >/dev/null 2>&1; then
-      total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
-      if [ "${total:-0}" -gt "$shown" ]; then
-        sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
-        shown=$total
+      if [ "${VERBOSE:-0}" = 1 ]; then
+        total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
+        if [ "${total:-0}" -gt "$shown" ]; then
+          sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
+          shown=$total
+        fi
+      else
+        printf '\r\033[K%s' "$(python3 "$(dirname "$0")/progress.py" /tmp/td_watch.log --since "$since")"
       fi
     fi
     if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
+      [ "${VERBOSE:-0}" = 1 ] || printf '\r\033[K%s\n' "$(python3 "$(dirname "$0")/progress.py" /tmp/td_watch.log --since "$since" --done)"
       echo ""
       echo "==================================================================="
       echo " DONE — $OUT_BVH is ready. Downloading to $(pwd) ..."
@@ -85,8 +96,12 @@ watch_run() {
       --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)
     if [ -z "$live" ]; then
       if aws s3 cp "s3://$bucket/run.log" /tmp/td_watch.log >/dev/null 2>&1; then
-        total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
-        [ "${total:-0}" -gt "$shown" ] && sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
+        if [ "${VERBOSE:-0}" = 1 ]; then
+          total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
+          [ "${total:-0}" -gt "$shown" ] && sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
+        else
+          echo ""; echo "--- last 40 lines of run.log ---"; tr '\r' '\n' < /tmp/td_watch.log | grep -v '^\s*$' | tail -40
+        fi
       fi
       if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
         aws s3 cp "s3://$bucket/$OUT_BVH" . || true; return 0
@@ -98,7 +113,7 @@ watch_run() {
       echo "==================================================================="
       return 1
     fi
-    sleep 30
+    sleep 15
   done
 }
 

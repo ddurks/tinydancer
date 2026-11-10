@@ -29,8 +29,10 @@ repo root.
    box, then **auto-follows the run** and downloads the BVH when done — one command,
    walk away.
 
-**D. Watching (automatic).** `launch.sh` streams `run.log` to your terminal live and,
-when `<clip>.bvh` appears (e.g. `buyit.bvh`), downloads it to the repo folder and prints
+**D. Watching (automatic).** A one-line progress bar (stage, %, elapsed, ETA) from
+`infra/aws/progress.py`; `VERBOSE=1` streams the raw log instead, and
+`python3 infra/aws/progress.py --watch <BUCKET>` follows a run from anywhere. When
+`<clip>.bvh` appears (e.g. `buyit.bvh`), downloads it to the repo folder and prints
 the Blender command. You don't poll anything.
 - **Ctrl-C is safe** — it stops *watching* only; the instance keeps running.
 - **Re-attach** (after Ctrl-C, or from another terminal) without relaunching:
