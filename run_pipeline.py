@@ -1,17 +1,27 @@
 """
-End-to-end: video.mp4 -> GVHMR inference -> BVH animation file.
+End-to-end: video.mp4 -> motion inference -> BVH animation file.
 
-GVHMR (https://github.com/zju3dv/GVHMR) replaced WHAM as the motion estimator:
-better accuracy, no DPVO compile (SimpleVO by default), actively maintained. It
-outputs SMPL-X params; this script converts them to a BVH that Blender imports as
-an armature.
+Two interchangeable Stage-1 backends produce the same (poses, trans) that the
+shared BVH writer consumes:
 
-Usage (from inside the GVHMR/ directory, with setup done and checkpoints in place):
+  --backend gvhmr   (default, validated): GVHMR's 4-stage chain
+      (https://github.com/zju3dv/GVHMR). Run from inside the GVHMR/ dir.
+  --backend human3r (spike, see HUMAN3R.md): Human3R's single feed-forward model
+      (https://github.com/fanegg/Human3R). Run from inside the Human3R/ dir.
+
+Both emit SMPL-X params (pelvis + 21 body joints = 22), which this script converts
+to a BVH that Blender imports as an armature. The BVH writer is backend-agnostic.
+
+Usage:
+    # GVHMR (from inside GVHMR/):
     python run_pipeline.py /path/to/video.mp4 [--out animation.bvh]
+    # Human3R (from inside Human3R/):
+    python run_pipeline.py /path/to/video.mp4 --backend human3r [--out animation.bvh]
 
 Output:
-    - GVHMR raw output: outputs/demo/<video-name>/hmr4d_results.pt
-    - BVH file:         animation.bvh  (drag into Blender, or use blender_import.py)
+    - GVHMR:   outputs/demo/<name>/hmr4d_results.pt   (single .pt)
+    - Human3R: outputs/human3r/<name>/smpl/*.npz      (per-frame files)
+    - BVH file: animation.bvh  (drag into Blender, or use blender_import.py)
 """
 
 import argparse
@@ -108,8 +118,12 @@ def write_bvh(path, poses, trans, fps, joints=SMPL_JOINTS):
             children[parent].append(i)
 
     lines = ["HIERARCHY"]
+    # BVH motion rows list channels in the order joints appear in the
+    # hierarchy (depth-first), not in SMPL index order — record that order.
+    order = []
 
     def emit(idx, depth):
+        order.append(idx)
         name, parent, off = joints[idx]
         ind = "  " * depth
         head = "ROOT" if parent < 0 else "JOINT"
@@ -139,7 +153,7 @@ def write_bvh(path, poses, trans, fps, joints=SMPL_JOINTS):
     trans_cm = trans * SCALE
     for t in range(T):
         row = [f"{trans_cm[t, 0]:.6f}", f"{trans_cm[t, 1]:.6f}", f"{trans_cm[t, 2]:.6f}"]
-        for j in range(J):
+        for j in order:
             row.extend(f"{v:.6f}" for v in eulers[t, j])
         lines.append(" ".join(row))
 
@@ -219,28 +233,214 @@ def extract_motion(pt_path, frame="global"):
     return poses, transl
 
 
+# --- Human3R backend ----------------------------------------------------------
+# Human3R (https://github.com/fanegg/Human3R) is a single feed-forward model that
+# replaces GVHMR's YOLO->ViTPose->HMR2->GVHMR chain. Its output format differs from
+# GVHMR's (see HUMAN3R.md for the full mapping and the open validation items):
+#   * writes ONE .npz PER FRAME under <out_dir>/smpl/{f:06d}.npz (not one .pt)
+#   * pose is a single stacked axis-angle array rotvec (N, 53, 3) per frame, where
+#     N = people detected that frame and 53 = SMPL-X joints minus the 2 eyeballs:
+#         [0]      global_orient
+#         [1:22]   21 body joints        <- we keep these (+ pelvis = 22 total)
+#         [22:37]  left hand  (dropped)
+#         [37:52]  right hand (dropped)
+#         [52]     jaw        (dropped)
+#   * saved params are CAMERA frame; world-grounding is reconstructed from the c2w
+#     pose in the sibling <out_dir>/camera/{f:06d}.npz (frame="world", below).
+# Keeping pelvis + 21 body = 22 joints makes the result drop straight into
+# write_bvh() with SMPL_JOINTS[:22] — the same skeleton the GVHMR path emits.
+HUMAN3R_BODY_JOINTS = 22  # pelvis + 21 body joints
+
+
+def _axis_angle_to_matrix(aa):
+    """(N,3) axis-angle -> (N,3,3) rotation matrices (Rodrigues)."""
+    aa = np.asarray(aa, dtype=float).reshape(-1, 3)
+    n = aa.shape[0]
+    theta = np.linalg.norm(aa, axis=-1)
+    safe = np.where(theta < 1e-8, 1.0, theta)
+    k = aa / safe[:, None]
+    K = np.zeros((n, 3, 3))
+    K[:, 0, 1], K[:, 0, 2] = -k[:, 2], k[:, 1]
+    K[:, 1, 0], K[:, 1, 2] = k[:, 2], -k[:, 0]
+    K[:, 2, 0], K[:, 2, 1] = -k[:, 1], k[:, 0]
+    s = np.sin(theta)[:, None, None]
+    c = np.cos(theta)[:, None, None]
+    return np.eye(3)[None] + s * K + (1.0 - c) * (K @ K)
+
+
+def _matrix_to_axis_angle(R):
+    """(N,3,3) rotation matrices -> (N,3) axis-angle.
+
+    Uses the standard trace/skew formula. The theta≈pi case (antipodal axis) is
+    left to the small-angle branch's degradation — rare for a per-frame root
+    orientation, but a known limitation flagged in HUMAN3R.md.
+    """
+    R = np.asarray(R, dtype=float).reshape(-1, 3, 3)
+    tr = np.clip((R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2] - 1.0) / 2.0, -1.0, 1.0)
+    theta = np.arccos(tr)
+    axis = np.stack([R[:, 2, 1] - R[:, 1, 2],
+                     R[:, 0, 2] - R[:, 2, 0],
+                     R[:, 1, 0] - R[:, 0, 1]], axis=-1)
+    small = theta < 1e-6
+    denom = np.where(small, 1.0, 2.0 * np.sin(theta))
+    aa = axis / denom[:, None] * theta[:, None]
+    aa[small] = 0.0
+    return aa
+
+
+def run_human3r(video_path, output_root="outputs/human3r",
+                model_path="src/human3r_896L.pth"):
+    """Invoke Human3R's demo.py with --save. Returns the per-clip output dir.
+
+    demo.py writes per-frame files straight into --output_dir (no per-video
+    subfolder), so we give each clip its own <output_root>/<stem> dir to avoid
+    collisions. Requires the checkpoint + SMPL-X body model in place (setup_human3r.sh).
+    """
+    video_path = Path(video_path).resolve()
+    out_dir = Path(output_root) / video_path.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable, "demo.py",
+        "--model_path", str(model_path),
+        "--seq_path", str(video_path),
+        "--size", "512",
+        "--subsample", "1",
+        "--use_ttt3r",
+        "--vis_threshold", "2",
+        "--downsample_factor", "1",
+        "--reset_interval", "100",
+        "--save",                       # REQUIRED — without it nothing is written
+        "--output_dir", str(out_dir),
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    subprocess.run(cmd)
+    if not any((out_dir / "smpl").glob("*.npz")):
+        raise FileNotFoundError(
+            f"Expected per-frame files in {out_dir/'smpl'} — Human3R produced no "
+            f"output. Check the demo.py log above (did it run with --save?)."
+        )
+    return out_dir
+
+
+def extract_motion_human3r(output_dir, frame="world", person="auto"):
+    """Aggregate Human3R per-frame smpl/*.npz -> (poses [T,22,3] aa, trans [T,3]).
+
+    frame:
+        'world'  — gravity-aligned (Human3R's headline output). Reconstructed by
+                   applying each frame's camera-to-world (c2w) pose to the root
+                   orientation and translation. NOT yet validated on a real
+                   sequence — see HUMAN3R.md; use 'camera' if it looks wrong.
+        'camera' — the raw saved params. Correct as-is for a static camera up to a
+                   constant global transform (which Blender/retargeting absorb).
+    person:
+        'auto'   — per frame, take the highest-`scores` detection. Robust for the
+                   single-subject clips this pipeline targets; collapses
+                   multi-person scenes to one track (with a warning). Cross-frame
+                   identity tracking is NOT handled yet.
+        <int>    — always take that row index.
+    """
+    output_dir = Path(output_dir)
+    files = sorted((output_dir / "smpl").glob("*.npz"))
+    if not files:
+        raise FileNotFoundError(f"No smpl/*.npz under {output_dir}")
+
+    cam_dir = output_dir / "camera"
+    poses, trans = [], []
+    multiperson, skipped, warned_no_cam = 0, 0, False
+
+    for f in files:
+        d = np.load(f, allow_pickle=True)
+        rot = np.asarray(d["rotvec"]).reshape(-1, 53, 3)         # (N,53,3)
+        tr = np.asarray(d["transl"]).reshape(-1, 3)              # (N,3)
+        n = rot.shape[0]
+        if n == 0:
+            skipped += 1
+            continue
+        if n > 1:
+            multiperson += 1
+
+        if isinstance(person, int):
+            i = min(max(person, 0), n - 1)
+        elif "scores" in d.files:
+            i = int(np.argmax(np.asarray(d["scores"]).reshape(-1)))
+        else:
+            i = 0
+
+        body = rot[i, :HUMAN3R_BODY_JOINTS].copy()               # (22,3)
+        transl = tr[i].copy()                                    # (3,)
+
+        if frame == "world":
+            cam_f = cam_dir / f.name
+            if cam_f.exists():
+                c2w = np.asarray(np.load(cam_f, allow_pickle=True)["pose"]).reshape(4, 4)
+                Rw = c2w[:3, :3]
+                body[0] = _matrix_to_axis_angle(Rw @ _axis_angle_to_matrix(body[0:1])[0])[0]
+                transl = Rw @ transl + c2w[:3, 3]
+            elif not warned_no_cam:
+                print("WARNING: frame='world' but no camera/*.npz found; "
+                      "using camera-frame params instead.")
+                warned_no_cam = True
+
+        poses.append(body)
+        trans.append(transl)
+
+    if multiperson:
+        print(f"WARNING: {multiperson}/{len(files)} frames had >1 person; collapsed "
+              f"to a single subject (person={person!r}). Verify the chosen track.")
+    if skipped:
+        print(f"NOTE: {skipped} frame(s) had no detected person and were skipped.")
+    if not poses:
+        raise RuntimeError(f"No usable frames extracted from {output_dir}")
+
+    return np.stack(poses, axis=0), np.stack(trans, axis=0)      # (T,22,3), (T,3)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("video", help="Path to input mp4")
     ap.add_argument("--out", default="animation.bvh", help="Output BVH file")
+    ap.add_argument("--backend", choices=["gvhmr", "human3r"], default="gvhmr",
+                    help="Motion estimator: gvhmr (validated default) or human3r "
+                         "(single-model spike; see HUMAN3R.md).")
     ap.add_argument("--skip-infer", action="store_true",
-                    help="Skip inference, just convert existing hmr4d_results.pt")
-    ap.add_argument("--moving-cam", action="store_true",
-                    help="Camera moves: use SimpleVO instead of -s (static).")
+                    help="Skip inference, just convert the already-saved output.")
     ap.add_argument("--incam", action="store_true",
                     help="Use camera-frame params instead of world-grounded.")
-    ap.add_argument("--output-root", default="outputs/demo",
-                    help="GVHMR output root (must match its demo.py).")
+    ap.add_argument("--output-root", default=None,
+                    help="Model output root. Defaults per backend "
+                         "(outputs/demo for gvhmr, outputs/human3r for human3r).")
+    # GVHMR-only
+    ap.add_argument("--moving-cam", action="store_true",
+                    help="[gvhmr] Camera moves: use SimpleVO instead of -s (static).")
+    # Human3R-only
+    ap.add_argument("--human3r-model", default="src/human3r_896L.pth",
+                    help="[human3r] Checkpoint path.")
+    ap.add_argument("--person", default="auto",
+                    help="[human3r] Subject in multi-person clips: 'auto' "
+                         "(highest score) or an integer row index.")
     args = ap.parse_args()
 
-    if args.skip_infer:
-        name = Path(args.video).stem
-        pt = Path(args.output_root) / name / "hmr4d_results.pt"
-    else:
-        pt = run_gvhmr(args.video, output_root=args.output_root,
-                       static_cam=not args.moving_cam)
+    name = Path(args.video).stem
 
-    poses, trans = extract_motion(pt, frame="incam" if args.incam else "global")
+    if args.backend == "gvhmr":
+        output_root = args.output_root or "outputs/demo"
+        if args.skip_infer:
+            pt = Path(output_root) / name / "hmr4d_results.pt"
+        else:
+            pt = run_gvhmr(args.video, output_root=output_root,
+                           static_cam=not args.moving_cam)
+        poses, trans = extract_motion(pt, frame="incam" if args.incam else "global")
+    else:  # human3r
+        output_root = args.output_root or "outputs/human3r"
+        person = int(args.person) if str(args.person).lstrip("-").isdigit() else args.person
+        if args.skip_infer:
+            out_dir = Path(output_root) / name
+        else:
+            out_dir = run_human3r(args.video, output_root=output_root,
+                                  model_path=args.human3r_model)
+        poses, trans = extract_motion_human3r(
+            out_dir, frame="camera" if args.incam else "world", person=person)
+
     fps = video_fps(args.video)
     write_bvh(args.out, poses, trans, fps, SMPL_JOINTS[:poses.shape[1]])
 

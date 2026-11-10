@@ -52,6 +52,11 @@ cost-safety, and troubleshooting are in **`AWS.md`**.
 - Install the free [Rokoko Studio Live addon](https://github.com/Rokoko/rokoko-studio-live-blender).
 - Source armature = `WHAM_Source`, target = your humanoid rig. Auto-build bone list → retarget → bake.
 
+**Alternative — skip retargeting:** for a new, roughly-humanoid, *unrigged* character you
+can skin your mesh directly to `WHAM_Source` (parent → Automatic Weights) instead of
+retargeting. See [SKINNING.md](SKINNING.md) — including how to automate it via the Blender
+MCP server.
+
 ## Skeleton reference (SMPL/SMPL-X joints, used by `run_pipeline.py`)
 
 `Pelvis → {L_Hip→L_Knee→L_Ankle→L_Foot, R_Hip→R_Knee→R_Ankle→R_Foot, Spine1→Spine2→Spine3→{Neck→Head, L_Collar→L_Shoulder→L_Elbow→L_Wrist(→L_Hand), R_Collar→R_Shoulder→R_Elbow→R_Wrist(→R_Hand)}}`
@@ -80,6 +85,10 @@ BVH conventions: cm units, Y-up, `-Z` forward, ZYX rotation order, 6-channel roo
 - **Monocular limits.** Foot sliding / depth jitter on fast moves are expected. GVHMR is
   already near state of the art here; `--run_smplify`-style refinement or physics-based
   post (e.g. PhysHMR) are future options.
+- **Alternative Stage-1 backend (spike).** `run_pipeline.py --backend human3r` swaps the
+  4-stage GVHMR chain for [Human3R](https://github.com/fanegg/Human3R), a single
+  feed-forward model (world-grounded SMPL-X, predicts hands). Adapter validated on
+  synthetic output, not yet on a real GPU run — see [HUMAN3R.md](HUMAN3R.md).
 - **Retargeting quality depends on the target rig's bone naming.** Rokoko auto-maps common
   naming (Mixamo, Rigify, UE5 Manny); custom rigs need a manual bone list.
 

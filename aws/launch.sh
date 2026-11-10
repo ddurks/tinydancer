@@ -249,9 +249,10 @@ python run_pipeline.py "$VIDEO_FILE" --out "$OUT_BVH"
 aws s3 cp "$OUT_BVH" "s3://$BUCKET/$OUT_BVH"
 echo "DONE: s3://$BUCKET/$OUT_BVH"
 USERDATA
-sed -i -e "s|__BUCKET__|$BUCKET|g" -e "s|__REGION__|$REGION|g" \
-       -e "s|__VIDEO_FILE__|$VIDEO_FILE|g" -e "s|__VIDEO_STEM__|$VIDEO_STEM|g" \
-       -e "s|__OUT_BVH__|$OUT_BVH|g" "$UD"
+# Write via a temp file rather than `sed -i`, whose syntax differs on macOS (BSD sed).
+sed -e "s|__BUCKET__|$BUCKET|g" -e "s|__REGION__|$REGION|g" \
+    -e "s|__VIDEO_FILE__|$VIDEO_FILE|g" -e "s|__VIDEO_STEM__|$VIDEO_STEM|g" \
+    -e "s|__OUT_BVH__|$OUT_BVH|g" "$UD" > "$UD.tmp" && mv "$UD.tmp" "$UD"
 
 # --- launch (retry while IAM profile finishes propagating) -------------------
 ID=""
