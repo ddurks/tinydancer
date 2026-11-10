@@ -1,5 +1,5 @@
 # Bone map for flowerguy_fullbody.armature, generated/verified via check_rig.py.
-# Use:  blender --background your_scene.blend --python retarget.py -- --map flowerguy_map.py
+# Use:  blender --background your_scene.blend --python blender/retarget.py -- --map rigs/flowerguy_map.py
 #
 # This rig vs. stuntguy (danceguy_map.py):
 #  - REQUIRES a 'pelvis' bone added as the common root, with 'back', 'hip.l' and

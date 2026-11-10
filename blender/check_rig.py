@@ -3,8 +3,8 @@ check_rig.py — does your character's armature have the bones needed to retarge
 the WHAM_Source (SMPL-X) dance motion onto it?
 
 Run one of:
-  blender --background your_character.blend --python check_rig.py
-  blender --background --python check_rig.py -- your_character.fbx
+  blender --background your_character.blend --python blender/check_rig.py
+  blender --background --python blender/check_rig.py -- your_character.fbx
   # ...or paste into the Scripting tab of a .blend that has your character
 
 It prints: every armature bone, a best-effort match for each SMPL joint we drive,

@@ -8,7 +8,7 @@ applies it frame-for-frame to the RENDER, zoomed in just enough that the
 shake never reveals an edge. The render's audio is kept.
 
 Run (needs opencv-python, numpy, scipy, and ffmpeg on PATH):
-  python handheld.py source.mp4 render.mp4 out.mp4 [--strength 1.0] [--smooth 0.5]
+  python video/handheld.py source.mp4 render.mp4 out.mp4 [--strength 1.0] [--smooth 0.5]
                                                    [--clip 90] [--soften 0.0]
                                                    [--source-start S --loop-fade F]
 

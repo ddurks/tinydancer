@@ -5,7 +5,7 @@ scripts and docs), which is MIT-licensed — see [LICENSE](LICENSE).
 
 It does **not** include or redistribute any model weights, checkpoints, or body
 models. Those are downloaded onto your own machine / GPU instance at runtime by
-`setup.sh` and `aws/launch.sh`. Each is governed by **its own license**, several
+`setup.sh` and `infra/aws/launch.sh`. Each is governed by **its own license**, several
 of which **restrict use to non-commercial research**. By running this pipeline
 you are downloading and using those assets directly, and you are responsible for
 reviewing and complying with their terms. The MIT license on this repo's code

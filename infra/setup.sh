@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GVHMR setup for a Linux + NVIDIA GPU box. Run once per environment.
-# For the fully-automated AWS path, use aws/launch.sh instead — this script is for
+# For the fully-automated AWS path, use infra/aws/launch.sh instead — this script is for
 # a self-hosted GPU box you drive by hand (AWS g4dn/g5, a workstation, etc.).
 set -euo pipefail
 
@@ -15,7 +15,7 @@ cd GVHMR
 # Install the package and its deps (PyTorch per GVHMR's requirements.txt).
 # If chumpy fails to build ("No module named 'pip'"), run
 #   pip install --no-build-isolation chumpy
-# first and retry — see AWS.md "Gotchas" #3.
+# first and retry — see docs/AWS.md "Gotchas" #3.
 pip install -r requirements.txt
 pip install -e .
 # NOTE: DPVO is NOT required — GVHMR uses its built-in SimpleVO by default, and
@@ -33,7 +33,7 @@ if [ ! -f inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt ]; then
     # gdown --folder may nest under a folder name; verify the tree matches:
     #   inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt  (move files up if nested)
     # Drive rate-limits repeated pulls. If gdown fails, use the Hugging Face mirror
-    # (what aws/launch.sh does): huggingface_hub.snapshot_download(
+    # (what infra/aws/launch.sh does): huggingface_hub.snapshot_download(
     #   repo_id="camenduru/GVHMR", local_dir="inputs/checkpoints")
 fi
 
@@ -53,4 +53,4 @@ echo ""
 echo "Setup steps done. Verify with GVHMR's own demo first:"
 echo "    python tools/demo/demo.py --video=docs/example_video/tennis.mp4 -s"
 echo "Then run our converter:"
-echo "    python ../run_pipeline.py ../buyit.mp4 --out ../buyit.bvh"
+echo "    python ../motion/run_pipeline.py ../examples/buyit.mp4 --out ../buyit.bvh"

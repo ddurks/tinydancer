@@ -3,7 +3,7 @@ retarget.py — copy the WHAM_Source (SMPL-X) motion onto YOUR character's armat
 No addon required: it bakes the result directly as keyframes on your rig.
 
 Run:
-  blender --background your_scene.blend --python retarget.py -- --map BONE_MAP.py [options]
+  blender --background your_scene.blend --python blender/retarget.py -- --map BONE_MAP.py [options]
 where your_scene.blend contains BOTH armatures:
   * WHAM_Source  (append it from animation.blend, or import animation.bvh into the file)
   * your character's rig

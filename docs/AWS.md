@@ -6,7 +6,7 @@ roulette — you control the environment instead of fighting a hosted one.
 
 ---
 
-## Hands-off path (local AWS CLI + self-terminating instance) — `aws/launch.sh`
+## Hands-off path (local AWS CLI + self-terminating instance) — `infra/aws/launch.sh`
 
 Driven from your own machine in a bash shell — macOS/Linux, or **Git Bash** on
 Windows (AWS CLI already configured). The
@@ -19,12 +19,12 @@ Quotas → EC2 → "Running On-Demand G and VT instances" → ≥ 4 vCPUs.*
 
 **B. Get SMPL-X (once):** download `SMPLX_NEUTRAL.npz` from
 <https://smpl-x.is.tue.mpg.de/> (free account, accept license) and drop it in the
-repo root next to `run_pipeline.py`.
+repo root.
 
 **C. Edit + run** (from the repo root, in bash):
-1. Open `aws/launch.sh`, set `REGION`, a globally-unique `BUCKET`, and
+1. Open `infra/aws/launch.sh`, set `REGION`, a globally-unique `BUCKET`, and
    `INSTANCE_TYPE` (and the input paths if your files live elsewhere).
-2. `bash aws/launch.sh`
+2. `bash infra/aws/launch.sh`
    It uploads the three inputs, creates the IAM role, finds the AMI, launches the
    box, then **auto-follows the run** and downloads the BVH when done — one command,
    walk away.
@@ -35,7 +35,7 @@ the Blender command. You don't poll anything.
 - **Ctrl-C is safe** — it stops *watching* only; the instance keeps running.
 - **Re-attach** (after Ctrl-C, or from another terminal) without relaunching:
   ```bash
-  WATCH_ONLY=1 bash aws/launch.sh
+  WATCH_ONLY=1 bash infra/aws/launch.sh
   ```
 - **On failure** the watcher reports the box terminated without a BVH and points at
   the preserved `s3://<BUCKET>/<clip>.hmr4d_results.pt` (raw inference output, if any).
@@ -48,14 +48,14 @@ the Blender command. You don't poll anything.
 **E. Local Blender:** see step 8 below. For the beat/loop/camera-shake helpers, also
 grab `s3://<BUCKET>/<clip>.hmr4d_results.pt` (see the README's "Extras").
 
-> Note: `aws/launch.sh` fails loudly to `run.log` so a broken run is diagnosable.
+> Note: `infra/aws/launch.sh` fails loudly to `run.log` so a broken run is diagnosable.
 > The manual runbook below is the fallback if you'd rather SSH in and drive it yourself.
 
 ---
 
 ## Cost & safety (it cleans up after itself)
 
-Each `bash aws/launch.sh` launches **exactly one** instance that **self-terminates**
+Each `bash infra/aws/launch.sh` launches **exactly one** instance that **self-terminates**
 when its script ends — success *or* failure. Two mechanisms guarantee it:
 - `--instance-initiated-shutdown-behavior terminate` on launch, and
 - a `trap … shutdown -h now` in the boot script (runs on any exit, incl. `set -e` aborts).
@@ -83,14 +83,14 @@ aws ec2 terminate-instances --region us-east-1 --instance-ids \
 
 ---
 
-## Gotchas baked into `aws/launch.sh` (lessons from real runs)
+## Gotchas baked into `infra/aws/launch.sh` (lessons from real runs)
 
 Each of these was a real failure we hit and fixed in the script — documented so the
 fixes aren't mysterious and so a future break is faster to diagnose:
 
 1. **Windows + Git Bash user-data path.** The Windows `aws.exe` resolves
    `file:///tmp/x` as `C:\tmp\x`. Fix: the boot script is written into the repo
-   (`aws/_userdata.gen.sh`) and passed as a relative `file://` path both shells agree on.
+   (`infra/aws/_userdata.gen.sh`) and passed as a relative `file://` path both shells agree on.
 2. **`python: command not found`.** The Deep Learning AMI ships `python3`, not
    `python`, and isn't reliably a conda env. Fix: symlink `python → python3` and use
    the **system Python 3.10** (which is exactly GVHMR's target version).
@@ -188,7 +188,7 @@ scp -i "tinydancer.pem" SMPLX_NEUTRAL.npz ubuntu@<PUBLIC_DNS>:~/GVHMR/inputs/che
 
 ## 5. Upload our converter + the clip
 ```powershell
-scp -i "tinydancer.pem" run_pipeline.py buyit.mp4 ubuntu@<PUBLIC_DNS>:~/GVHMR/
+scp -i "tinydancer.pem" motion/run_pipeline.py examples/buyit.mp4 ubuntu@<PUBLIC_DNS>:~/GVHMR/
 ```
 
 ## 6. Run it (on the box)
@@ -211,7 +211,7 @@ Then in the EC2 console: **Instance state → Stop** (or **Terminate** if you're
 
 ## 8. Local Blender (no GPU)
 ```powershell
-& "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --background --python blender_import.py -- buyit.bvh buyit.blend
+& "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --background --python blender/blender_import.py -- buyit.bvh buyit.blend
 ```
-(macOS: `/Applications/Blender.app/Contents/MacOS/Blender --background --python blender_import.py -- buyit.bvh buyit.blend`)
+(macOS: `/Applications/Blender.app/Contents/MacOS/Blender --background --python blender/blender_import.py -- buyit.bvh buyit.blend`)
 Open `buyit.blend` → animated `WHAM_Source` armature, ready to retarget.

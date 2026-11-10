@@ -4,7 +4,7 @@ musical BEATS (from the clip's audio) and KEY POSES (where the dancer hits a
 pose: fast movement that snaps to a hold, from the GVHMR motion).
 
 Run (any machine; needs numpy, scipy, librosa, torch, and ffmpeg on PATH):
-  python dance_cues.py <clip>.hmr4d_results.pt <clip audio or video> --out cues.json
+  python motion/dance_cues.py <clip>.hmr4d_results.pt <clip audio or video> --out cues.json
       [--start SEC] [--fps N]
 
 --start trims the audio to where the clip (and so the motion) begins, when the

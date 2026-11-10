@@ -1,5 +1,5 @@
 # Bone map for stuntguy.armature (anatomical naming), generated/verified via check_rig.py.
-# Use:  blender --background your_scene.blend --python retarget.py -- --map danceguy_map.py
+# Use:  blender --background your_scene.blend --python blender/retarget.py -- --map rigs/danceguy_map.py
 #
 # Notes on this rig's structural simplifications (see README):
 #  - Root: SMPL "Pelvis" -> "back" (carries global translation + base orientation).

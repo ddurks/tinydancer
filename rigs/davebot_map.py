@@ -1,6 +1,6 @@
 # Bone map for davebot (../dave/body/blender/davebot.blend, armature "Armature").
-# Use:  blender --background scene.blend --python retarget.py -- \
-#           --map davebot_map.py --action dance --root-scale auto --ground
+# Use:  blender --background scene.blend --python blender/retarget.py -- \
+#           --map rigs/davebot_map.py --action dance --root-scale auto --ground
 #
 # Notes on this rig's structure:
 #  - Three parentless roots share the pelvis point: "back" (spine chain) and

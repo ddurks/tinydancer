@@ -11,17 +11,17 @@ Pipeline: dance video → SMPL-X motion (via [GVHMR](https://github.com/zju3dv/G
 
 | File | Where it runs | Role |
 | --- | --- | --- |
-| `buyit.mp4` | — | Bundled demo clip (stationary cam, single subject — the favorable case). Bring your own clip via `VIDEO_PATH=...`. |
-| `setup.sh` | GPU box (AWS `g4dn.xlarge` / any Linux+NVIDIA) | Clones GVHMR, installs deps, prompts for checkpoints + the SMPL-X body model (license-gated). |
-| `aws/launch.sh` + `AWS.md` | Local bash (macOS / Linux / Git Bash) → AWS | **The Stage-1 path.** One command launches a self-terminating GPU box that installs GVHMR, runs your clip, and returns `<clip>.bvh` to S3 — then live-streams the log and auto-downloads the result (Ctrl-C safe; re-attach with `WATCH_ONLY=1`). Clip is set by `VIDEO_PATH` (default `buyit.mp4`); each clip gets its own BVH. Set your `BUCKET` first. `AWS.md` documents it incl. cost-safety + every gotcha we hit. |
-| `run_pipeline.py` | GPU box, run from inside `GVHMR/` | Calls `tools/demo/demo.py`, parses `hmr4d_results.pt`, writes the BVH (`--out`). Axis-angle → ZYX Euler conversion; joint count auto-detected (22 for SMPL-X, 24 for SMPL). `--skip-infer` re-converts an existing `.pt` without re-running GVHMR. |
-| `blender_import.py` | Local Blender (any OS, no GPU needed) | Imports the BVH at correct scale/axes, names the armature `WHAM_Source`, pins the frame range, and **saves a `.blend`**. |
-| `check_rig.py` | Local Blender | Inspects your character's armature, best-effort matches each SMPL joint to one of its bones, flags missing required joints, and prints a ready-to-paste `BONE_MAP` for `retarget.py`. |
-| `retarget.py` | Local Blender | Addon-free retarget: bakes the `WHAM_Source` motion onto your rig as keyframes using a rest-pose-aware transfer. Pass a bone map with `--map`; see [Retargeting](#retargeting-retargetpy) for the other flags. |
-| `*_map.py` (`danceguy_map.py`, `flowerguy_map.py`, `davebot_map.py`) | — | Example `BONE_MAP`s for real rigs, with notes on the structural quirks each one needed (and, in the header, the exact `retarget.py` command). Use them as templates for your own. |
-| `dance_cues.py` | Any machine (Python) | Beats (from the audio) + key poses (from the motion) → `cues.json`. |
-| `loop_clip.py` | Any machine (Python) | Cuts a seamless, beat-aligned loop → looped BVH (+ optional audio and cues). |
-| `handheld.py` | Any machine (Python) | Transfers the source clip's hand-held camera shake onto a clean render. |
+| `examples/buyit.mp4` | — | Bundled demo clip (stationary cam, single subject — the favorable case). Bring your own clip via `VIDEO_PATH=...`. |
+| `infra/setup.sh` | GPU box (AWS `g4dn.xlarge` / any Linux+NVIDIA) | Clones GVHMR, installs deps, prompts for checkpoints + the SMPL-X body model (license-gated). |
+| `infra/aws/launch.sh` + `docs/AWS.md` | Local bash (macOS / Linux / Git Bash) → AWS | **The Stage-1 path.** One command launches a self-terminating GPU box that installs GVHMR, runs your clip, and returns `<clip>.bvh` to S3 — then live-streams the log and auto-downloads the result (Ctrl-C safe; re-attach with `WATCH_ONLY=1`). Clip is set by `VIDEO_PATH` (default `buyit.mp4`); each clip gets its own BVH. Set your `BUCKET` first. `docs/AWS.md` documents it incl. cost-safety + every gotcha we hit. |
+| `motion/run_pipeline.py` | GPU box, run from inside `GVHMR/` | Calls `tools/demo/demo.py`, parses `hmr4d_results.pt`, writes the BVH (`--out`). Axis-angle → ZYX Euler conversion; joint count auto-detected (22 for SMPL-X, 24 for SMPL). `--skip-infer` re-converts an existing `.pt` without re-running GVHMR. |
+| `blender/blender_import.py` | Local Blender (any OS, no GPU needed) | Imports the BVH at correct scale/axes, names the armature `WHAM_Source`, pins the frame range, and **saves a `.blend`**. |
+| `blender/check_rig.py` | Local Blender | Inspects your character's armature, best-effort matches each SMPL joint to one of its bones, flags missing required joints, and prints a ready-to-paste `BONE_MAP` for `retarget.py`. |
+| `blender/retarget.py` | Local Blender | Addon-free retarget: bakes the `WHAM_Source` motion onto your rig as keyframes using a rest-pose-aware transfer. Pass a bone map with `--map`; see [Retargeting](#retargeting-retargetpy) for the other flags. |
+| `rigs/*_map.py` (`danceguy_map.py`, `flowerguy_map.py`, `davebot_map.py`) | — | Example `BONE_MAP`s for real rigs, with notes on the structural quirks each one needed (and, in the header, the exact `retarget.py` command). Use them as templates for your own. |
+| `motion/dance_cues.py` | Any machine (Python) | Beats (from the audio) + key poses (from the motion) → `cues.json`. |
+| `motion/loop_clip.py` | Any machine (Python) | Cuts a seamless, beat-aligned loop → looped BVH (+ optional audio and cues). |
+| `video/handheld.py` | Any machine (Python) | Transfers the source clip's hand-held camera shake onto a clean render. |
 
 ## Why two machines
 
@@ -29,26 +29,26 @@ Stage 1 (video → motion) is neural inference and needs an **NVIDIA GPU**. Stag
 (BVH → armature → retarget) run in Blender on any machine, no GPU. So: do Stage 1 on
 AWS, download the BVH, finish locally.
 
-## End-to-end run (recommended: automated AWS) — see `AWS.md`
+## End-to-end run (recommended: automated AWS) — see `docs/AWS.md`
 
 One-time: request GPU quota, download the license-gated `SMPLX_NEUTRAL.npz` to the
 repo root. Then from a bash shell (macOS/Linux, or Git Bash on Windows):
 ```bash
-# First time: edit aws/launch.sh and set BUCKET (or pass it inline as below).
-bash aws/launch.sh                              # default clip: buyit.mp4 -> buyit.bvh
-VIDEO_PATH=./your_clip.mp4 bash aws/launch.sh   # any other clip
+# First time: edit infra/aws/launch.sh and set BUCKET (or pass it inline as below).
+bash infra/aws/launch.sh                              # default clip: buyit.mp4 -> buyit.bvh
+VIDEO_PATH=./your_clip.mp4 bash infra/aws/launch.sh   # any other clip
 ```
 It uploads your inputs, launches a **self-terminating** GPU box that installs GVHMR,
 runs your clip in **static-camera mode** (the robust default; no VO), and uploads
 `<clip>.bvh` (plus the raw `<clip>.hmr4d_results.pt`) to S3. The script follows
 `run.log` live and downloads the BVH when it lands. Each clip writes its own
 `<clip>.bvh`, so runs don't clobber each other. Full details,
-cost-safety, and troubleshooting are in **`AWS.md`**.
+cost-safety, and troubleshooting are in **`docs/AWS.md`**.
 
 ## Blender side (local, verified)
 
 ```bash
-blender --background --python blender_import.py -- buyit.bvh buyit.blend
+blender --background --python blender/blender_import.py -- buyit.bvh buyit.blend
 # Windows: "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" ...
 # macOS:   /Applications/Blender.app/Contents/MacOS/Blender ...
 ```
@@ -62,7 +62,7 @@ blender --background --python blender_import.py -- buyit.bvh buyit.blend
 Put `WHAM_Source` and your rig in one `.blend`, run `check_rig.py` to get a
 `BONE_MAP`, save it as a `.py` (or start from a `*_map.py`), then:
 ```bash
-blender --background scene.blend --python retarget.py -- --map my_map.py [flags]
+blender --background scene.blend --python blender/retarget.py -- --map my_map.py [flags]
 ```
 - `--target NAME` — the rig to retarget onto; required when the file has several armatures.
 - `--action NAME` — key into a new action instead of touching the rig's existing ones.
@@ -78,7 +78,7 @@ A `BONE_MAP` value may be a list, so one SMPL joint can drive several target bon
 
 **Alternative — skip retargeting:** for a new, roughly-humanoid, *unrigged* character you
 can skin your mesh directly to `WHAM_Source` (parent → Automatic Weights) instead of
-retargeting. See [SKINNING.md](SKINNING.md) — including how to automate it via the Blender
+retargeting. See [docs/SKINNING.md](docs/SKINNING.md) — including how to automate it via the Blender
 MCP server.
 
 ## Extras: cues, loops, camera shake
@@ -86,13 +86,13 @@ MCP server.
 Plain Python scripts (no GPU, no Blender; need `ffmpeg` on PATH). The first two read
 the raw `<clip>.hmr4d_results.pt` — grab it with `aws s3 cp s3://<BUCKET>/<clip>.hmr4d_results.pt .`.
 
-- **`dance_cues.py`** — `python dance_cues.py <clip>.hmr4d_results.pt <audio-or-video> --out cues.json [--start SEC]`.
+- **`dance_cues.py`** — `python motion/dance_cues.py <clip>.hmr4d_results.pt <audio-or-video> --out cues.json [--start SEC]`.
   Beats via librosa, key poses = fast motion snapping to a hold. `--start` = where the
   clip begins in an untrimmed source's audio.
-- **`loop_clip.py`** — `python loop_clip.py <clip>.hmr4d_results.pt cues.json --out loop.bvh [--beats 8] [--fade 0.4]`.
+- **`loop_clip.py`** — `python motion/loop_clip.py <clip>.hmr4d_results.pt cues.json --out loop.bvh [--beats 8] [--fade 0.4]`.
   Picks the `--beats`-long window whose end pose best matches its start and crossfades the
   seam. Optional `--audio src.mp4 --audio-start S --audio-out loop.m4a`, `--cues-out`, `--window-out`.
-- **`handheld.py`** — `python handheld.py source.mp4 render.mp4 out.mp4 [--strength 1.0]`.
+- **`handheld.py`** — `python video/handheld.py source.mp4 render.mp4 out.mp4 [--strength 1.0]`.
   Tracks the source phone clip's jitter (shift + roll, pans removed) and applies it to a
   frame-matched render. For a loop: `--source-start S --loop-fade F`. Needs `opencv-python`.
 
@@ -134,7 +134,7 @@ BVH conventions: cm units, Y-up, `-Z` forward, ZYX rotation order, 6-channel roo
 - **Stage 2 (BVH → Blender armature): verified** on Blender 5.1 here, for both the 24-joint
   (SMPL) and 22-joint (SMPL-X) skeletons — produces an animated `WHAM_Source` armature and a
   saved `.blend`.
-- **Stage 1 (GVHMR inference + `.pt → BVH`): verified on AWS** via `aws/launch.sh` on a
+- **Stage 1 (GVHMR inference + `.pt → BVH`): verified on AWS** via `infra/aws/launch.sh` on a
   g5.xlarge (YOLO → ViTPose → HMR2 → GVHMR → `run_pipeline.py` writes the BVH).
 - **Stage 3 (`retarget.py`): working** in recent runs; per-rig bone maps are the `*_map.py` files.
 
@@ -144,7 +144,7 @@ Models, checkpoints, cloned upstreams, and large/personal media are intentionall
 not committed — the scripts fetch or generate them. You supply:
 
 - `SMPLX_NEUTRAL.npz` — license-gated, download from <https://smpl-x.is.tue.mpg.de/>.
-- GVHMR + its checkpoints — `setup.sh` / `aws/launch.sh` clone and download these.
+- GVHMR + its checkpoints — `infra/setup.sh` / `infra/aws/launch.sh` clone and download these.
 - Your own source clip — only the small `buyit.mp4` demo is bundled.
 
 ## License

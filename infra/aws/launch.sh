@@ -2,14 +2,14 @@
 # Hands-off AWS run, driven from your LOCAL machine (macOS/Linux bash or Git Bash,
 # AWS CLI configured).
 #
-# Run from the repo root:   bash aws/launch.sh
+# Run from the repo root:   bash infra/aws/launch.sh
 #
 # It uploads your local inputs to S3, then launches a GPU instance whose user-data
 # installs GVHMR, runs your clip, uploads <clip-stem>.bvh back to S3, and SELF-
 # TERMINATES. It then follows run.log live and downloads the BVH when it lands.
 #
 # Default clip is buyit.mp4. To run a different one:
-#   VIDEO_PATH=./blackandwhite.mp4 bash aws/launch.sh
+#   VIDEO_PATH=./blackandwhite.mp4 bash infra/aws/launch.sh
 #
 # The ONLY manual prerequisite (license, cannot be scripted): download
 # SMPLX_NEUTRAL.npz once from https://smpl-x.is.tue.mpg.de/ and put its path below.
@@ -19,19 +19,19 @@ set -euo pipefail
 REGION="us-east-1"
 # S3 bucket names are GLOBALLY unique. Append your AWS account id to avoid
 # collisions, e.g. tinydancer-123456789012 (find it: aws sts get-caller-identity
-# --query Account --output text). Override per-run: BUCKET=my-bucket bash aws/launch.sh
+# --query Account --output text). Override per-run: BUCKET=my-bucket bash infra/aws/launch.sh
 BUCKET="${BUCKET:-tinydancer-CHANGE-ME}"
 INSTANCE_TYPE="g5.xlarge"              # or g4dn.xlarge (cheaper, slower)
 
 # Local input files to upload (relative to where you run this):
 SMPLX_PATH="./SMPLX_NEUTRAL.npz"       # you downloaded this (license-gated)
-# Clip to process. Override per-run:  VIDEO_PATH=./buyit.mp4 bash aws/launch.sh
-VIDEO_PATH="${VIDEO_PATH:-./buyit.mp4}"
-RUNPIPE_PATH="./run_pipeline.py"
+# Clip to process. Override per-run:  VIDEO_PATH=./examples/buyit.mp4 bash infra/aws/launch.sh
+VIDEO_PATH="${VIDEO_PATH:-./examples/buyit.mp4}"
+RUNPIPE_PATH="./motion/run_pipeline.py"
 #######################################################################
 
 if [ "$BUCKET" = "tinydancer-CHANGE-ME" ]; then
-  echo "Set BUCKET first: edit aws/launch.sh (or run BUCKET=tinydancer-<your-account-id> bash aws/launch.sh)." >&2
+  echo "Set BUCKET first: edit infra/aws/launch.sh (or run BUCKET=tinydancer-<your-account-id> bash infra/aws/launch.sh)." >&2
   exit 1
 fi
 
@@ -42,7 +42,7 @@ VIDEO_STEM="${VIDEO_FILE%.*}"
 OUT_BVH="${VIDEO_STEM}.bvh"
 
 # --- live watcher: stream run.log here until the BVH lands, then download it ---
-# Re-watch an in-progress run without relaunching:  WATCH_ONLY=1 bash aws/launch.sh
+# Re-watch an in-progress run without relaunching:  WATCH_ONLY=1 bash infra/aws/launch.sh
 watch_run() {
   local bucket="$1" shown=0 total live
   echo ""
@@ -63,7 +63,7 @@ watch_run() {
       aws s3 cp "s3://$bucket/$OUT_BVH" . || true
       echo ""
       echo " Build the Blender armature locally (blender = your Blender executable):"
-      echo "   blender --background --python blender_import.py -- $OUT_BVH ${VIDEO_STEM}.blend"
+      echo "   blender --background --python blender/blender_import.py -- $OUT_BVH ${VIDEO_STEM}.blend"
       echo "==================================================================="
       return 0
     fi
@@ -143,7 +143,7 @@ echo "Using AMI: $AMI"
 # Quoted heredoc (no local expansion); the __PLACEHOLDERS__ are filled by sed below.
 # Written inside the repo (not /tmp) so the Windows aws.exe can read it via a
 # relative file:// path when run from Git Bash.
-UD="aws/_userdata.gen.sh"
+UD="infra/aws/_userdata.gen.sh"
 cat > "$UD" <<'USERDATA'
 #!/bin/bash
 set -xeuo pipefail
@@ -264,9 +264,9 @@ for i in 1 2 3 4 5; do
     --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":120,"DeleteOnTermination":true}}]' \
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tinydancer}]' \
     --user-data "file://$UD" --count 1 \
-    --query 'Instances[0].InstanceId' --output text 2>aws/_run.err) && break
+    --query 'Instances[0].InstanceId' --output text 2>infra/aws/_run.err) && break
   echo "run-instances attempt $i failed; retrying in 15s ..."
-  cat aws/_run.err; sleep 15
+  cat infra/aws/_run.err; sleep 15
 done
 
 echo ""
@@ -277,5 +277,5 @@ if [ -z "${ID:-}" ] || [ "${ID:-}" = "None" ]; then
 fi
 
 # Auto-follow the run to completion and download the BVH. Ctrl-C is safe (the box
-# keeps running; re-attach with: WATCH_ONLY=1 bash aws/launch.sh).
+# keeps running; re-attach with: WATCH_ONLY=1 bash infra/aws/launch.sh).
 watch_run "$BUCKET"

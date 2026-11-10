@@ -9,7 +9,7 @@ cuts the matching audio with the same seam crossfade, and writes the window's
 beat / key-pose cues shifted to start at 0.
 
 Run (needs numpy, scipy, torch, soundfile, librosa; ffmpeg on PATH):
-  python loop_clip.py <clip>.hmr4d_results.pt cues.json --out <clip>_loop.bvh
+  python motion/loop_clip.py <clip>.hmr4d_results.pt cues.json --out <clip>_loop.bvh
       [--beats 8] [--fade 0.4] [--fps N]
       [--audio source.mp4 --audio-start 5.0 --audio-out loop.m4a]
       [--cues-out loop_cues.json] [--window-out window.json]

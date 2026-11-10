@@ -2,7 +2,7 @@
 Blender helper: import the BVH and prep it for retargeting onto your own mesh.
 
 Run from Blender's Scripting tab, OR headlessly:
-    blender --background --python blender_import.py -- animation.bvh
+    blender --background --python blender/blender_import.py -- animation.bvh
 
 The script:
   1. Imports the BVH with sensible scale + axis settings for SMPL output.
@@ -73,6 +73,6 @@ if __name__ == "__main__":
     argv = argv[argv.index("--") + 1:] if "--" in argv else []
     if not argv:
         raise SystemExit(
-            "Usage: blender --background --python blender_import.py -- "
+            "Usage: blender --background --python blender/blender_import.py -- "
             "animation.bvh [output.blend]")
     main(argv[0], argv[1] if len(argv) > 1 else None)
