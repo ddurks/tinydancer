@@ -43,7 +43,7 @@ VIDEO_PATH=./your_clip.mp4 bash infra/aws/launch.sh   # any other clip
 It uploads your inputs, launches a **self-terminating** GPU box that installs GVHMR,
 runs your clip in **static-camera mode** (the robust default; no VO), and uploads
 `<clip>.bvh` (plus the raw `<clip>.hmr4d_results.pt`) to S3. The script follows
-`run.log` live and downloads the BVH when it lands. Each clip writes its own
+`<clip>.run.log` live and downloads the BVH when it lands. Each clip writes its own
 `<clip>.bvh`, so runs don't clobber each other. Full details,
 cost-safety, and troubleshooting are in **`docs/AWS.md`**.
 

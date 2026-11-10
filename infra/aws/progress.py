@@ -1,10 +1,10 @@
 """
-progress.py — turn a GVHMR run.log into a one-line progress bar.
+progress.py — turn a GVHMR run log (<clip>.run.log) into a one-line progress bar.
 
   python3 infra/aws/progress.py run.log [--since EPOCH] [--done]
                                 # one line, for a log on disk (--done: the BVH has landed)
-  python3 infra/aws/progress.py --watch BUCKET [--since EPOCH] [--every 10]
-                                # follow s3://BUCKET/run.log until DONE (or the box dies)
+  python3 infra/aws/progress.py --watch BUCKET CLIP [--since EPOCH] [--every 10]
+                                # follow s3://BUCKET/CLIP.run.log until DONE (or the box dies)
 
 launch.sh calls this while it watches a run. Standard library only (the log is
 fetched with the AWS CLI), so it runs on any machine with python3.
@@ -20,24 +20,24 @@ import sys
 import time
 
 # (name, minutes, markers that mean this stage has begun) — in run order.
+# Minutes from a timed g5.xlarge run on a 29.5s clip (2026-11-10: inference
+# started 5m30s in, preprocessing took 139s, 9m33s launch to BVH).
 STAGES = [
-    ("booting",               1.5, []),
-    ("installing system deps", 1.5, [r"^\+ apt-get update"]),
-    ("cloning GVHMR",          0.5, [r"^\+ git clone"]),
-    ("installing torch",       3.0, [r"pip install torch=="]),
-    ("installing GVHMR deps",  6.0, [r"pip install --no-build-isolation chumpy",
+    ("booting",                1.0, []),
+    ("installing system deps", 0.6, [r"^\+ (\[[\d:]+\] )?apt-get update"]),
+    ("cloning GVHMR",          0.3, [r"^\+ (\[[\d:]+\] )?git clone"]),
+    ("installing torch",       1.2, [r"pip install torch=="]),
+    ("installing GVHMR deps",  1.6, [r"pip install --no-build-isolation chumpy",
                                      r"pip install -r requirements.txt"]),
-    ("fetching checkpoints",   1.5, [r"^\+ mkdir -p inputs/checkpoints", r"Using cached checkpoints",
-                                     r"Checkpoints already present"]),
-    ("uploading inputs",       0.3, [r"SMPLX_NEUTRAL.npz inputs/checkpoints"]),
-    ("tracking people (YOLO)", 1.0, [r"\[Preprocess\] Start", r"YoloV8 Tracking"]),
-    ("2D pose (ViTPose)",      0.7, [r"ViTPose:"]),
-    ("image features (HMR2)",  1.0, [r"HMR2 Feature:"]),
-    ("solving motion (GVHMR)", 0.3, [r"\[HMR4D\] Predicting"]),
-    ("writing BVH",            0.2, [r"\[HMR4D\] Elapsed", r"^\+ aws s3 cp \S+\.bvh"]),
+    ("fetching checkpoints",   0.8, [r"^\+ (\[[\d:]+\] )?mkdir -p inputs/checkpoints",
+                                     r"Using cached checkpoints"]),
+    ("loading the clip",       1.2, [r"SMPLX_NEUTRAL.npz inputs/checkpoints"]),
+    ("tracking people (YOLO)", 0.8, [r"\[Preprocess\] Start", r"YoloV8 Tracking"]),
+    ("2D pose (ViTPose)",      0.6, [r"ViTPose:"]),
+    ("image features (HMR2)",  0.9, [r"HMR2 Feature:"]),
+    ("solving motion (GVHMR)", 0.2, [r"\[HMR4D\] Predicting"]),
+    ("writing BVH",            0.2, [r"\[HMR4D\] Elapsed", r"^\+ (\[[\d:]+\] )?aws s3 cp \S+\.bvh"]),
 ]
-# On a prebuilt image the install stages are skipped outright.
-PREBUILT = r"Prebuilt image: GVHMR already installed"
 TQDM = {7: "YoloV8 Tracking", 8: "ViTPose", 9: "HMR2 Feature"}
 DONE = r"^DONE: "
 WIDTH = 28
@@ -48,19 +48,17 @@ def parse(text):
     lines = text.replace("\r", "\n").splitlines()
     if any(re.search(DONE, l) for l in lines):
         return 1.0, "done", ""
-    stage, skip_install = 0, any(re.search(PREBUILT, l) for l in lines)
+    stage = 0
     for line in lines:
         for i, (_, _, marks) in enumerate(STAGES):
             if i > stage and any(re.search(m, line) for m in marks):
                 stage = i
-    if skip_install and stage < 5:
-        stage = 5
     frac, detail = 0.0, ""
     if stage in TQDM:
         pcts = [int(m) for m in re.findall(re.escape(TQDM[stage]) + r":\s+(\d+)%", text)]
         if pcts:
             frac, detail = pcts[-1] / 100, f"{pcts[-1]}%"
-    weights = [0.0 if skip_install and 1 <= i <= 4 else w for i, (_, w, _) in enumerate(STAGES)]
+    weights = [w for _, w, _ in STAGES]
     total = sum(weights)
     overall = (sum(weights[:stage]) + weights[stage] * frac) / total
     return min(overall, 0.99), STAGES[stage][0], detail
@@ -83,8 +81,8 @@ def line(overall, name, detail, since=None):
     return out
 
 
-def fetch(bucket):
-    r = subprocess.run(["aws", "s3", "cp", f"s3://{bucket}/run.log", "-"],
+def fetch(bucket, clip):
+    r = subprocess.run(["aws", "s3", "cp", f"s3://{bucket}/{clip}.run.log", "-"],
                        capture_output=True, text=True)
     return r.stdout if r.returncode == 0 else ""
 
@@ -92,10 +90,10 @@ def fetch(bucket):
 def main(argv):
     since = float(argv[argv.index("--since") + 1]) if "--since" in argv else None
     if "--watch" in argv:
-        bucket = argv[argv.index("--watch") + 1]
+        bucket, clip = argv[argv.index("--watch") + 1], argv[argv.index("--watch") + 2]
         every = float(argv[argv.index("--every") + 1]) if "--every" in argv else 10
         while True:
-            overall, name, detail = parse(fetch(bucket))
+            overall, name, detail = parse(fetch(bucket, clip))
             sys.stdout.write("\r\033[K" + line(overall, name, detail, since))
             sys.stdout.flush()
             if overall >= 1:

@@ -31,7 +31,7 @@ repo root.
 
 **D. Watching (automatic).** A one-line progress bar (stage, %, elapsed, ETA) from
 `infra/aws/progress.py`; `VERBOSE=1` streams the raw log instead, and
-`python3 infra/aws/progress.py --watch <BUCKET>` follows a run from anywhere. When
+`python3 infra/aws/progress.py --watch <BUCKET> <clip>` follows a run from anywhere. When
 `<clip>.bvh` appears (e.g. `buyit.bvh`), it downloads it to the repo folder and prints
 the Blender command. You don't poll anything.
 - **Ctrl-C is safe** — it stops *watching* only; the instance keeps running.
@@ -43,14 +43,14 @@ the Blender command. You don't poll anything.
   the preserved `s3://<BUCKET>/<clip>.hmr4d_results.pt` (raw inference output, if any).
 - Manual equivalents, if you prefer:
   ```bash
-  aws s3 cp s3://<BUCKET>/run.log - | tail -n 40
+  aws s3 cp s3://<BUCKET>/<clip>.run.log - | tail -n 40
   aws s3 cp s3://<BUCKET>/buyit.bvh .   # or <clip>.bvh for another clip
   ```
 
 **E. Local Blender:** see step 8 below. For the beat/loop/camera-shake helpers, also
 grab `s3://<BUCKET>/<clip>.hmr4d_results.pt` (see the README's "Extras").
 
-> Note: `infra/aws/launch.sh` fails loudly to `run.log` so a broken run is diagnosable.
+> Note: `infra/aws/launch.sh` fails loudly to `<clip>.run.log` so a broken run is diagnosable.
 > The manual runbook below is the fallback if you'd rather SSH in and drive it yourself.
 
 ---
@@ -64,12 +64,15 @@ when its script ends — success *or* failure. Two mechanisms guarantee it:
 - EBS is `DeleteOnTermination=true`, so no orphaned volumes either.
 
 Cost is ~**$1/hr** for `g5.xlarge` on-demand (or ~$0.53/hr `g4dn.xlarge`), and about half
-that on spot, which `launch.sh` asks for first (`SPOT=0` for on-demand only). A run on the
-stock image installs GVHMR first and takes ~40 min; on the **prebuilt image** (any AMI you
-own tagged `Name=tinydancer-gvhmr`, used automatically; `FRESH=1` to skip it) it is
-~8–10 min, so a run is roughly **$0.07–0.15**. The prebuilt image's snapshot costs
-~$0.05/GB-month (a few dollars a month); see the `launch.sh` header to rebuild it, and
-deregister old ones (and delete their snapshots) when you replace them.
+that on spot, which `launch.sh` asks for first (`SPOT=0` for on-demand only). A run installs
+GVHMR fresh (~5 min, checkpoints from the S3 cache) and then infers (a few minutes), about
+**10 minutes and $0.15-0.30** for a 30-second clip.
+
+> Why not a prebuilt image with GVHMR baked in? Tried and measured (2026-11-10, same clip,
+> launched side by side): it skipped the install but finished *later* — 16+ min against
+> 9m33s. A volume restored from a snapshot fetches each block from S3 the first time it's
+> read, so every library import and multi-GB checkpoint load crawls; one bulk S3 download of
+> the checkpoints is far faster. AWS's fix (Fast Snapshot Restore) costs ~$540/month per AZ.
 
 **Audit anytime** (should be empty once a run finishes):
 ```bash
@@ -97,7 +100,7 @@ fixes aren't mysterious and so a future break is faster to diagnose:
 
 1. **Windows + Git Bash user-data path.** The Windows `aws.exe` resolves
    `file:///tmp/x` as `C:\tmp\x`. Fix: the boot script is written into the repo
-   (`infra/aws/_userdata.gen.sh`) and passed as a relative `file://` path both shells agree on.
+   (`infra/aws/_userdata_<clip>.gen.sh`) and passed as a relative `file://` path both shells agree on.
 2. **`python: command not found`.** The Deep Learning AMI ships `python3`, not
    `python`, and isn't reliably a conda env. Fix: symlink `python → python3` and use
    the **system Python 3.10** (which is exactly GVHMR's target version).
@@ -124,7 +127,8 @@ fixes aren't mysterious and so a future break is faster to diagnose:
    don't want the preview — so `run_pipeline.py` uses `subprocess.run` (not
    `check_call`) and treats "did the `.pt` get written?" as the success check. No
    second license-gated SMPL download needed.
-8. **Fail loud.** `set -e` + everything tee'd to `run.log` (pushed to S3 every 60s)
+8. **Fail loud.** `set -e` + everything tee'd to `<clip>.run.log` (pushed to S3 every 60s, each
+   command timestamped)
    means a broken run stops at the real error instead of printing a false "DONE".
 
 ---

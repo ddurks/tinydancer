@@ -6,23 +6,17 @@
 #
 # It uploads your local inputs to S3, then launches a GPU instance whose user-data
 # installs GVHMR, runs your clip, uploads <clip-stem>.bvh back to S3, and SELF-
-# TERMINATES. It then follows run.log live and downloads the BVH when it lands.
+# TERMINATES. It then follows <clip>.run.log live and downloads the BVH when it lands.
 #
 # Default clip is buyit.mp4. To run a different one:
 #   VIDEO_PATH=./blackandwhite.mp4 bash infra/aws/launch.sh
 #
-# Faster/cheaper by default: it boots your own prebuilt image (tagged
-# Name=tinydancer-gvhmr: GVHMR + checkpoints already installed, ~8 min a run
-# instead of ~40) when one exists, and asks for a spot instance (about half
-# price), falling back to on-demand if spot is refused.
-#   FRESH=1   ignore the prebuilt image and install from scratch
+# It asks for a spot instance first (about half price), falling back to
+# on-demand if spot is refused.
 #   SPOT=0    on-demand only
-# To (re)make the prebuilt image: run once with FRESH=1, and while it is past
-# the install (run.log shows `python run_pipeline.py`), from your machine:
-#   aws ec2 create-image --instance-id <id> --no-reboot --name tinydancer-gvhmr-<date> \
-#     --tag-specifications 'ResourceType=image,Tags=[{Key=Name,Value=tinydancer-gvhmr}]' \
-#                          'ResourceType=snapshot,Tags=[{Key=Name,Value=tinydancer-gvhmr}]'
-# Deregister old images (and delete their snapshots) to stop paying for them.
+# A run takes ~10 min. There is deliberately no prebuilt image: a volume restored
+# from a snapshot loads its blocks lazily from S3, which made runs slower, not
+# faster (see docs/AWS.md).
 #
 # The ONLY manual prerequisite (license, cannot be scripted): download
 # SMPLX_NEUTRAL.npz once from https://smpl-x.is.tue.mpg.de/ and put its path below.
@@ -53,34 +47,37 @@ fi
 VIDEO_FILE="$(basename "$VIDEO_PATH")"
 VIDEO_STEM="${VIDEO_FILE%.*}"
 OUT_BVH="${VIDEO_STEM}.bvh"
+# Per clip too, so two clips can run at once without trampling each other.
+RUN_LOG="${VIDEO_STEM}.run.log"
+WATCH_TMP="${TMPDIR:-/tmp}/td_watch_${VIDEO_STEM}.log"
 
-# --- live watcher: stream run.log here until the BVH lands, then download it ---
+# --- live watcher: follow <clip>.run.log until the BVH lands, then download it ---
 # Re-watch an in-progress run without relaunching:  WATCH_ONLY=1 bash infra/aws/launch.sh
 # Follow a run: a one-line progress bar (infra/aws/progress.py) by default, or
 # the raw log streamed as it grows with VERBOSE=1.
 watch_run() {
   local bucket="$1" shown=0 total live since
   since=$(aws ec2 describe-instances --region "$REGION" \
-    --filters "Name=tag:Name,Values=tinydancer" "Name=instance-state-name,Values=running,pending" \
+    --filters "Name=tag:Name,Values=tinydancer" "Name=tag:Clip,Values=$VIDEO_STEM" "Name=instance-state-name,Values=running,pending" \
     --query 'Reservations[].Instances[].LaunchTime' --output text 2>/dev/null | head -1 | cut -c1-19)
   since=$(python3 -c "import calendar,sys,time;print(calendar.timegm(time.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S')))" "$since" 2>/dev/null || date +%s)
   echo ""
-  echo ">>> Following s3://$bucket/run.log — Ctrl-C to stop watching (the box keeps running)."
+  echo ">>> Following s3://$bucket/$RUN_LOG — Ctrl-C to stop watching (the box keeps running)."
   echo ""
   while true; do
-    if aws s3 cp "s3://$bucket/run.log" /tmp/td_watch.log >/dev/null 2>&1; then
+    if aws s3 cp "s3://$bucket/$RUN_LOG" "$WATCH_TMP" >/dev/null 2>&1; then
       if [ "${VERBOSE:-0}" = 1 ]; then
-        total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
+        total=$(wc -l < "$WATCH_TMP" 2>/dev/null || echo 0)
         if [ "${total:-0}" -gt "$shown" ]; then
-          sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
+          sed -n "$((shown+1)),${total}p" "$WATCH_TMP"
           shown=$total
         fi
       else
-        printf '\r\033[K%s' "$(python3 "$(dirname "$0")/progress.py" /tmp/td_watch.log --since "$since")"
+        printf '\r\033[K%s' "$(python3 "$(dirname "$0")/progress.py" "$WATCH_TMP" --since "$since")"
       fi
     fi
     if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
-      [ "${VERBOSE:-0}" = 1 ] || printf '\r\033[K%s\n' "$(python3 "$(dirname "$0")/progress.py" /tmp/td_watch.log --since "$since" --done)"
+      [ "${VERBOSE:-0}" = 1 ] || printf '\r\033[K%s\n' "$(python3 "$(dirname "$0")/progress.py" "$WATCH_TMP" --since "$since" --done)"
       echo ""
       echo "==================================================================="
       echo " DONE — $OUT_BVH is ready. Downloading to $(pwd) ..."
@@ -92,15 +89,15 @@ watch_run() {
       return 0
     fi
     live=$(aws ec2 describe-instances --region "$REGION" \
-      --filters "Name=tag:Name,Values=tinydancer" "Name=instance-state-name,Values=running,pending" \
+      --filters "Name=tag:Name,Values=tinydancer" "Name=tag:Clip,Values=$VIDEO_STEM" "Name=instance-state-name,Values=running,pending" \
       --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)
     if [ -z "$live" ]; then
-      if aws s3 cp "s3://$bucket/run.log" /tmp/td_watch.log >/dev/null 2>&1; then
+      if aws s3 cp "s3://$bucket/$RUN_LOG" "$WATCH_TMP" >/dev/null 2>&1; then
         if [ "${VERBOSE:-0}" = 1 ]; then
-          total=$(wc -l < /tmp/td_watch.log 2>/dev/null || echo 0)
-          [ "${total:-0}" -gt "$shown" ] && sed -n "$((shown+1)),${total}p" /tmp/td_watch.log
+          total=$(wc -l < "$WATCH_TMP" 2>/dev/null || echo 0)
+          [ "${total:-0}" -gt "$shown" ] && sed -n "$((shown+1)),${total}p" "$WATCH_TMP"
         else
-          echo ""; echo "--- last 40 lines of run.log ---"; tr '\r' '\n' < /tmp/td_watch.log | grep -v '^\s*$' | tail -40
+          echo ""; echo "--- last 40 lines of $RUN_LOG ---"; tr '\r' '\n' < "$WATCH_TMP" | grep -v '^\s*$' | tail -40
         fi
       fi
       if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
@@ -140,7 +137,7 @@ aws s3 cp "$RUNPIPE_PATH" "s3://$BUCKET/run_pipeline.py"
 
 # Clear stale outputs for THIS clip from a previous run (keep the
 # checkpoints.tar.gz cache and other clips' BVHs).
-aws s3 rm "s3://$BUCKET/run.log" 2>/dev/null || true
+aws s3 rm "s3://$BUCKET/$RUN_LOG" 2>/dev/null || true
 aws s3 rm "s3://$BUCKET/$OUT_BVH" 2>/dev/null || true
 
 # --- IAM role so the instance can read/write the bucket ----------------------
@@ -156,16 +153,8 @@ if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
   echo "Waiting for IAM propagation ..."; sleep 20
 fi
 
-# --- AMI: our prebuilt GVHMR image if there is one, else the stock DLAMI ------
-AMI=""
-if [ "${FRESH:-0}" != 1 ]; then
-  AMI=$(aws ec2 describe-images --region "$REGION" --owners self \
-    --filters "Name=tag:Name,Values=tinydancer-gvhmr" "Name=state,Values=available" \
-    --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' --output text)
-  [ "$AMI" = "None" ] && AMI=""
-  [ -n "$AMI" ] && echo "Using prebuilt GVHMR image: $AMI"
-fi
-[ -n "$AMI" ] || AMI=$(aws ec2 describe-images --region "$REGION" --owners amazon \
+# --- AMI: newest Deep Learning AMI (PyTorch, Ubuntu 22.04) ---------------------
+AMI=$(aws ec2 describe-images --region "$REGION" --owners amazon \
   --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch*Ubuntu 22.04*" \
             "Name=state,Values=available" \
   --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' --output text)
@@ -179,9 +168,13 @@ echo "Using AMI: $AMI"
 # Quoted heredoc (no local expansion); the __PLACEHOLDERS__ are filled by sed below.
 # Written inside the repo (not /tmp) so the Windows aws.exe can read it via a
 # relative file:// path when run from Git Bash.
-UD="infra/aws/_userdata.gen.sh"
+# Per clip, so two launches at once never send each other's clip.
+UD="infra/aws/_userdata_${VIDEO_STEM}.gen.sh"
+RUN_ERR="infra/aws/_run_${VIDEO_STEM}.err"
 cat > "$UD" <<'USERDATA'
 #!/bin/bash
+# Every traced command carries the time, so stage timings can be read off the log.
+export PS4='+ [$(date +%H:%M:%S)] '
 set -xeuo pipefail
 BUCKET="__BUCKET__"
 REGION="__REGION__"
@@ -193,7 +186,7 @@ LOG=/var/log/tinydancer.log
 exec > >(tee "$LOG") 2>&1
 
 finish(){
-  aws s3 cp "$LOG" "s3://$BUCKET/run.log" || true
+  aws s3 cp "$LOG" "s3://$BUCKET/${VIDEO_STEM}.run.log" || true
   # Preserve the raw GPU inference output (if produced) so a converter bug never
   # forces a full GPU re-run — we can re-convert from this .pt cheaply. Keyed per
   # clip so comparison runs don't overwrite each other.
@@ -203,15 +196,7 @@ finish(){
 }
 trap finish EXIT
 # heartbeat: push the log to S3 every 60s so you can watch progress live
-( while true; do sleep 60; aws s3 cp "$LOG" "s3://$BUCKET/run.log" >/dev/null 2>&1 || true; done ) &
-
-# A prebuilt image (see the header) already has all of this; check, don't assume.
-cd /home/ubuntu
-if [ -d GVHMR ] && python -c "import hmr4d, pytorch3d" 2>/dev/null; then
-  echo "Prebuilt image: GVHMR already installed."
-  cd GVHMR
-  rm -rf outputs/demo/*    # the image may hold a previous clip's (partial) outputs
-else
+( while true; do sleep 60; aws s3 cp "$LOG" "s3://$BUCKET/${VIDEO_STEM}.run.log" >/dev/null 2>&1 || true; done ) &
 
 # This AMI's system Python is 3.10 (matches GVHMR's cp310 wheels). Just make
 # `python` resolve to it (the AMI only ships `python3`), and pip into it.
@@ -237,14 +222,11 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 python -c "import pytorch3d" 2>/dev/null || \
   FORCE_CUDA=1 python -m pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-fi
 
 mkdir -p inputs/checkpoints inputs/checkpoints/body_models/smplx inputs/checkpoints/yolo
 
-# --- checkpoints: already on a prebuilt image, else S3 cache, else Hugging Face
-if [ -f inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt ]; then
-  echo "Checkpoints already present."
-elif aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1; then
+# --- checkpoints: S3 cache, else Hugging Face ----------------------------------
+if aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1; then
   echo "Using cached checkpoints from S3."
   aws s3 cp "s3://$BUCKET/checkpoints.tar.gz" /tmp/ck.tgz
   tar xzf /tmp/ck.tgz -C inputs/checkpoints
@@ -315,12 +297,12 @@ for i in 1 2 3 4 5; do
     --iam-instance-profile "Name=$ROLE" \
     --instance-initiated-shutdown-behavior terminate \
     --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":120,"DeleteOnTermination":true}}]' \
-    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tinydancer}]' \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=tinydancer},{Key=Clip,Value=$VIDEO_STEM}]" \
     --user-data "file://$UD" --count 1 \
-    --query 'Instances[0].InstanceId' --output text 2>infra/aws/_run.err) && break
+    --query 'Instances[0].InstanceId' --output text 2>"$RUN_ERR") && break
   echo "run-instances attempt $i failed; retrying in 15s ..."
-  cat infra/aws/_run.err
-  if [ ${#MARKET[@]} -gt 0 ] && grep -q -i "spot\|capacity\|MaxSpotInstanceCountExceeded" infra/aws/_run.err; then
+  cat "$RUN_ERR"
+  if [ ${#MARKET[@]} -gt 0 ] && grep -q -i "spot\|capacity\|MaxSpotInstanceCountExceeded" "$RUN_ERR"; then
     echo "Spot refused — falling back to on-demand."; MARKET=()
   fi
   sleep 15
