@@ -25,6 +25,9 @@ Options for rigs that aren't human-proportioned (e.g. davebot):
   --root-scale auto|<float>
                     scale root travel; "auto" = target leg length / source leg length
   --ground          shift the root so the feet rest on the target's rest-pose floor
+  --drift S         treat anything slower than S seconds as HMR drift: remove the
+                    root's slow wander across the floor (steps and sways stay), and
+                    with --ground follow the floor frame by frame, not one offset
   --face-front      cancel the source's average heading over the clip, so the
                     target faces the way its rest pose faces (world-grounded HMR
                     output has an arbitrary heading)
@@ -206,11 +209,37 @@ def main(argv):
         turn = math.remainder(yaw_at[fr] - yaw, math.tau)   # heading away from average
         return Matrix.Rotation(-face_damp * turn, 3, "Z") @ face
 
-    def root_pos(spb, z_offset):
+    # --drift: single-camera world-grounded HMR wanders — the dancer slides off
+    # across the floor and the floor itself creeps up or down. The root's path
+    # smoothed over the window is the wander; subtracting it (relative to f0)
+    # leaves the steps and sways and keeps the dancer where they started.
+    drift = flag(argv, "--drift")
+    win = max(1, round(float(drift) * sc.render.fps)) if drift else 0
+
+    def smooth(vals):
+        """Centred moving average over the --drift window, edges held."""
+        n, h = len(vals), win // 2
+        return [sum(vals[min(max(j, 0), n - 1)] for j in range(i - h, i + h + 1)) / (2 * h + 1)
+                for i in range(n)]
+
+    wander = [Vector((0, 0, 0))] * (f1 - f0 + 1)
+    if win and root_smpl:
+        xs, ys = [], []
+        for fr in range(f0, f1 + 1):
+            sc.frame_set(fr)
+            t = src.pose.bones[root_smpl].matrix.translation
+            xs.append(t.x); ys.append(t.y)
+        xs, ys = smooth(xs), smooth(ys)
+        wander = [Vector((x - xs[0], y - ys[0], 0)) for x, y in zip(xs, ys)]
+        print(f"Drift: removing up to {max(w.length for w in wander):.2f} m of slow root wander "
+              f"({drift}s window)")
+
+    def root_pos(spb, z_offset, fr):
+        t = spb.matrix.translation - wander[fr - f0]
         if root_scale is None:
-            p = face @ spb.matrix.translation
+            p = face @ t
         else:
-            p = tgt_root_rest + root_scale * (face @ (spb.matrix.translation - src_root0))
+            p = tgt_root_rest + root_scale * (face @ (t - src_root0))
         p.z += z_offset
         return p
 
@@ -231,7 +260,7 @@ def main(argv):
             m = r_tgt.to_4x4()
             m.translation = tpb.matrix.translation             # keep position...
             if smpl == root_smpl:
-                m.translation = root_pos(spb, z_offset)        # ...except root: follow source
+                m.translation = root_pos(spb, z_offset, f)     # ...except root: follow source
             tpb.matrix = m
             bpy.context.view_layer.update()                    # so children see this parent
             if key:
@@ -241,20 +270,28 @@ def main(argv):
 
     # --ground: a dry pass measures where the feet land, then the real pass
     # lifts/drops the whole clip so the typical lowest foot point (5th
-    # percentile, robust to a stray frame) sits at the rest-pose floor.
-    z_offset = 0.0
+    # percentile, robust to a stray frame) sits at the rest-pose floor. With
+    # --drift the same is done per frame over the window, so a creeping floor
+    # is followed while a jump shorter than the window still leaves it.
+    z_offsets = [0.0] * (f1 - f0 + 1)
     if "--ground" in argv and root_smpl and foot_bones:
         lows = []
         for f in range(f0, f1 + 1):
             pose_frame(f, 0.0, key=False)
             lows.append(foot_floor(lambda t, end: getattr(tgt.pose.bones[t], end)))
-        lows.sort()
         rest_floor = foot_floor(lambda t, end: getattr(tgt.pose.bones[t].bone, end + "_local"))
-        z_offset = rest_floor - lows[len(lows) // 20]
-        print(f"Ground offset: {z_offset:+.3f}")
+        if win:
+            n, h = len(lows), win // 2
+            floor = [sorted(lows[max(0, i - h):i + h + 1])[(min(n, i + h + 1) - max(0, i - h)) // 20]
+                     for i in range(n)]
+            z_offsets = [rest_floor - fl for fl in smooth(floor)]
+            print(f"Ground offset: {min(z_offsets):+.3f} to {max(z_offsets):+.3f} (tracked)")
+        else:
+            z_offsets = [rest_floor - sorted(lows)[len(lows) // 20]] * len(lows)
+            print(f"Ground offset: {z_offsets[0]:+.3f}")
 
     for f in range(f0, f1 + 1):
-        pose_frame(f, z_offset, key=True)
+        pose_frame(f, z_offsets[f - f0], key=True)
 
     sc.frame_set(f0)
     print(f"Retargeted {len(pairs)} bones across frames {f0}-{f1} onto '{tgt.name}'.")

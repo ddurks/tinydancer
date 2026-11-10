@@ -18,10 +18,11 @@ Pipeline: dance video → SMPL-X motion (via [GVHMR](https://github.com/zju3dv/G
 | `blender/blender_import.py` | Local Blender (any OS, no GPU needed) | Imports the BVH at correct scale/axes, names the armature `WHAM_Source`, pins the frame range, and **saves a `.blend`**. |
 | `blender/check_rig.py` | Local Blender | Inspects your character's armature, best-effort matches each SMPL joint to one of its bones, flags missing required joints, and prints a ready-to-paste `BONE_MAP` for `retarget.py`. |
 | `blender/retarget.py` | Local Blender | Addon-free retarget: bakes the `WHAM_Source` motion onto your rig as keyframes using a rest-pose-aware transfer. Pass a bone map with `--map`; see [Retargeting](#retargeting-retargetpy) for the other flags. |
-| `rigs/*_map.py` (`danceguy_map.py`, `flowerguy_map.py`, `davebot_map.py`) | — | Example `BONE_MAP`s for real rigs, with notes on the structural quirks each one needed (and, in the header, the exact `retarget.py` command). Use them as templates for your own. |
+| `rigs/*_map.py` (`danceguy_map.py`, `flowerguy_map.py`, `davebot_map.py`, `bigcorpsman_map.py`) | — | Example `BONE_MAP`s for real rigs, with notes on the structural quirks each one needed (and, in the header, the exact `retarget.py` command). Use them as templates for your own. |
 | `motion/dance_cues.py` | Any machine (Python) | Beats (from the audio) + key poses (from the motion) → `cues.json`. |
 | `motion/loop_clip.py` | Any machine (Python) | Cuts a seamless, beat-aligned loop → looped BVH (+ optional audio and cues). |
 | `video/handheld.py` | Any machine (Python) | Transfers the source clip's hand-held camera shake onto a clean render. |
+| `blender/bigcorp_dance.py` | Local Blender | BIGCORP's player rig: `retarget.py` plus keyed IK legs, foot planting and retiming, so the clip survives that game's glTF export. |
 
 ## Why two machines
 
