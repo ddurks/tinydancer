@@ -85,10 +85,6 @@ BVH conventions: cm units, Y-up, `-Z` forward, ZYX rotation order, 6-channel roo
 - **Monocular limits.** Foot sliding / depth jitter on fast moves are expected. GVHMR is
   already near state of the art here; `--run_smplify`-style refinement or physics-based
   post (e.g. PhysHMR) are future options.
-- **Alternative Stage-1 backend (spike).** `run_pipeline.py --backend human3r` swaps the
-  4-stage GVHMR chain for [Human3R](https://github.com/fanegg/Human3R), a single
-  feed-forward model (world-grounded SMPL-X, predicts hands). Adapter validated on
-  synthetic output, not yet on a real GPU run — see [HUMAN3R.md](HUMAN3R.md).
 - **Retargeting quality depends on the target rig's bone naming.** Rokoko auto-maps common
   naming (Mixamo, Rigify, UE5 Manny); custom rigs need a manual bone list.
 
