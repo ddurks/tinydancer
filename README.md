@@ -21,9 +21,11 @@ Pipeline: dance video → SMPL-X motion (via [GVHMR](https://github.com/zju3dv/G
 | `rigs/*_map.py` (`danceguy_map.py`, `flowerguy_map.py`, `davebot_map.py`, `bigcorpsman_map.py`, `cowboy_map.py`) | — | Example `BONE_MAP`s for real rigs, with notes on the structural quirks each one needed (and, in the header, the exact `retarget.py` command). Use them as templates for your own. |
 | `motion/dance_cues.py` | Any machine (Python) | Beats (from the audio) + key poses (from the motion) → `cues.json`. |
 | `motion/loop_clip.py` | Any machine (Python) | Cuts a seamless, beat-aligned loop → looped BVH (+ optional audio and cues). |
+| `motion/dance_check.py` | Any machine (Python) | Scores how much a BVH's limbs move; exits non-zero for someone barely moving. Dave's dance boxes use it to refuse non-dances. |
 | `video/handheld.py` | Any machine (Python) | Transfers the source clip's hand-held camera shake onto a clean render. |
 | `blender/cowboy_dance.py` | Local Blender | Cowboy Advance's cowboy: imports the game's `cowboy.glb`, retargets, and exports a clip-only glTF with matching node names so Bevy can play it on the stock model. |
 | `blender/bigcorp_dance.py` | Local Blender | BIGCORP's player rig: `retarget.py` plus keyed IK legs, foot planting and retiming, so the clip survives that game's glTF export. |
+| `blender/dave_dance.py` | Any Blender (headless) | D.A.V.E.: imports the site's `davebot.glb`, retargets, and exports a clip-only glTF the page binds onto Dave by node name. Runs on the GPU box when a visitor teaches Dave a dance (`../dave/mind/dances.py`). |
 
 ## Why two machines
 
