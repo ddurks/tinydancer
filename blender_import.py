@@ -10,7 +10,8 @@ The script:
   3. Leaves the scene ready for you to add your own mesh + retarget.
 
 Retargeting onto your own humanoid:
-  - Free option: install the Rokoko Studio Live Blender addon
+  - Addon-free: retarget.py in this repo (bakes WHAM_Source onto your rig).
+  - Free addon: install the Rokoko Studio Live Blender addon
     (https://github.com/Rokoko/rokoko-studio-live-blender) — has a built-in
     "Retarget Animation" panel. Set source = WHAM_Source, target = your rig,
     auto-build bone list, retarget.
@@ -69,10 +70,7 @@ def main(bvh_path, blend_path=None):
 if __name__ == "__main__":
     # Handle Blender's `--` argv separator.
     argv = sys.argv
-    if "--" in argv:
-        argv = argv[argv.index("--") + 1:]
-    else:
-        argv = []
+    argv = argv[argv.index("--") + 1:] if "--" in argv else []
     if not argv:
         raise SystemExit(
             "Usage: blender --background --python blender_import.py -- "

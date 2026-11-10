@@ -98,7 +98,8 @@ def main():
             raise SystemExit("--loop-fade needs that much source before --source-start")
         for k in range(fade_n):
             i = len(window) - fade_n + k
-            w_ = ((k + 1) / fade_n) ** 2 * (3 - 2 * (k + 1) / fade_n)  # smoothstep
+            x = (k + 1) / fade_n
+            w_ = x * x * (3 - 2 * x)                       # smoothstep
             window[i] = (1 - w_) * window[i] + w_ * shake[i0 + i - len(window)]
     shake = window
     out_fps = cap.get(cv2.CAP_PROP_FPS) or fps

@@ -8,7 +8,8 @@ roulette — you control the environment instead of fighting a hosted one.
 
 ## Hands-off path (local AWS CLI + self-terminating instance) — `aws/launch.sh`
 
-Driven from your own machine in **Git Bash** (AWS CLI already configured). The
+Driven from your own machine in a bash shell — macOS/Linux, or **Git Bash** on
+Windows (AWS CLI already configured). The
 script uploads your local inputs, launches the GPU box, and the box does the rest
 and self-terminates. The **one unavoidable manual thing** is the license-gated
 SMPL-X download.
@@ -20,7 +21,7 @@ Quotas → EC2 → "Running On-Demand G and VT instances" → ≥ 4 vCPUs.*
 <https://smpl-x.is.tue.mpg.de/> (free account, accept license) and drop it in the
 repo root next to `run_pipeline.py`.
 
-**C. Edit + run** (from the repo root, in Git Bash):
+**C. Edit + run** (from the repo root, in bash):
 1. Open `aws/launch.sh`, set `REGION`, a globally-unique `BUCKET`, and
    `INSTANCE_TYPE` (and the input paths if your files live elsewhere).
 2. `bash aws/launch.sh`
@@ -44,7 +45,8 @@ the Blender command. You don't poll anything.
   aws s3 cp s3://<BUCKET>/buyit.bvh .   # or <clip>.bvh for another clip
   ```
 
-**E. Local Blender:** see step 8 below.
+**E. Local Blender:** see step 8 below. For the beat/loop/camera-shake helpers, also
+grab `s3://<BUCKET>/<clip>.hmr4d_results.pt` (see the README's "Extras").
 
 > Note: `aws/launch.sh` fails loudly to `run.log` so a broken run is diagnosable.
 > The manual runbook below is the fallback if you'd rather SSH in and drive it yourself.
@@ -144,6 +146,8 @@ fixes aren't mysterious and so a future break is faster to diagnose:
 icacls "tinydancer.pem" /inheritance:r ; icacls "tinydancer.pem" /grant:r "$($env:USERNAME):(R)"
 ssh -i "tinydancer.pem" ubuntu@<PUBLIC_DNS>
 ```
+(macOS/Linux: `chmod 400 tinydancer.pem` instead of `icacls`; the `ssh`/`scp` commands
+below are the same.)
 
 ## 3. Set up GVHMR (on the box, Python 3.10 env)
 ```bash
@@ -163,7 +167,9 @@ pip install -e .
 python -c "import pytorch3d" 2>/dev/null || \
     FORCE_CUDA=1 pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
 
-# Checkpoints (public Google Drive folder).
+# Checkpoints (public Google Drive folder). Drive rate-limits hard (Gotcha 4); if
+# gdown fails, use the Hugging Face mirror instead:
+#   pip install huggingface_hub && python -c "from huggingface_hub import snapshot_download as s; s('camenduru/GVHMR', local_dir='inputs/checkpoints')"
 pip install gdown
 mkdir -p inputs/checkpoints
 gdown --folder https://drive.google.com/drive/folders/1eebJ13FUEXrKBawHpJroW0sNSxLjh9xD \
@@ -207,4 +213,5 @@ Then in the EC2 console: **Instance state → Stop** (or **Terminate** if you're
 ```powershell
 & "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --background --python blender_import.py -- buyit.bvh buyit.blend
 ```
+(macOS: `/Applications/Blender.app/Contents/MacOS/Blender --background --python blender_import.py -- buyit.bvh buyit.blend`)
 Open `buyit.blend` → animated `WHAM_Source` armature, ready to retarget.

@@ -246,7 +246,7 @@ def main():
 
     poses, trans = extract_motion(pt, frame="incam" if args.incam else "global")
     fps = video_fps(args.video)
-    write_bvh(args.out, poses, trans, fps, SMPL_JOINTS[:poses.shape[1]])
+    write_bvh(args.out, poses, trans, fps)
 
 
 if __name__ == "__main__":

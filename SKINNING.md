@@ -122,7 +122,10 @@ arm.data.pose_position = 'POSE'
 Prereqs: Blender is running with the MCP add-on connected, the `WHAM_Source` `.blend` is
 open, and your character mesh is imported (or give MCP the path and let it import).
 
-## Future helper: `skin_to_source.py`
+## Future helper: `skin_to_source.py` (not yet written)
+
+> **Planned, not in the repo.** The command below is a design sketch — the script
+> doesn't exist yet. Use the manual or MCP steps above for now.
 
 A background script mirroring `blender_import.py`, so this becomes one command:
 
@@ -131,6 +134,6 @@ blender --background scene.blend --python skin_to_source.py -- character.fbx
 # → import mesh, force Rest Position, rough auto-fit, parent Automatic Weights, save .blend
 ```
 
-TODO — not yet written. The auto-fit heuristic (match mesh bbox height to the armature,
+TODO: the auto-fit heuristic (match mesh bbox height to the armature,
 align feet) covers the common case; anything stylized still wants the manual alignment
 above (or just use retargeting).

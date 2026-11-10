@@ -18,7 +18,7 @@ from pathlib import Path
 
 import bpy
 
-# (smpl_joint, include-tokens, exclude-tokens, sided?) — ordered head -> limbs.
+# (smpl_joint, include-tokens, exclude-tokens, sided?) — ordered torso -> limbs.
 SPEC = [
     ("Pelvis",     ["hips", "pelvis", "hip", "root", "cog"], ["upleg", "thigh", "femur"], False),
     ("Spine1",     ["spine", "abdomen", "back", "torso"], [],                      False),
@@ -60,9 +60,9 @@ def side_of(name):
         return "L"
     if "right" in n:
         return "R"
-    if re.search(r"[._\- ]l(\b|[0-9._\- ]|$)", n) or re.search(r"[._\-]l$", n):
+    if re.search(r"[._\- ]l(\b|[0-9._\- ]|$)", n):
         return "L"
-    if re.search(r"[._\- ]r(\b|[0-9._\- ]|$)", n) or re.search(r"[._\-]r$", n):
+    if re.search(r"[._\- ]r(\b|[0-9._\- ]|$)", n):
         return "R"
     return None
 
@@ -164,7 +164,7 @@ def main():
             return None
         v = (b.tail_local - b.head_local)
         return abs(v.x) / (v.length + 1e-9)
-    lsh = bone_dir_x(mapping.get("L_Shoulder", "")) if mapping.get("L_Shoulder") else None
+    lsh = bone_dir_x(mapping["L_Shoulder"]) if "L_Shoulder" in mapping else None
     if lsh is not None:
         pose = "T-pose-ish (arms out)" if lsh > 0.6 else "NOT a clean T-pose (arms down/forward)"
         print(f"Rest pose: {pose}. Retargeters calibrate best from a T-pose; if it's an")

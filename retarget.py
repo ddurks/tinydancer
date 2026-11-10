@@ -3,7 +3,7 @@ retarget.py — copy the WHAM_Source (SMPL-X) motion onto YOUR character's armat
 No addon required: it bakes the result directly as keyframes on your rig.
 
 Run:
-  blender --background your_scene.blend --python retarget.py -- --map BONE_MAP.py
+  blender --background your_scene.blend --python retarget.py -- --map BONE_MAP.py [options]
 where your_scene.blend contains BOTH armatures:
   * WHAM_Source  (append it from animation.blend, or import animation.bvh into the file)
   * your character's rig
@@ -39,10 +39,9 @@ calibrates rest poses for you). Always eyeball the result and expect to clean up
 foot contact / minor offsets afterward.
 """
 
+import math
 import sys
 from pathlib import Path
-
-import math
 
 import bpy
 from mathutils import Matrix, Vector
@@ -81,12 +80,12 @@ def flag(argv, name, default=None):
 
 
 def load_map(argv):
-    if "--map" in argv:
-        path = Path(argv[argv.index("--map") + 1]).resolve()
-        ns = {}
-        exec(path.read_text(), ns)
-        return ns["BONE_MAP"]
-    return DEFAULT_MAP
+    path = flag(argv, "--map")
+    if path is None:
+        return DEFAULT_MAP
+    ns = {}
+    exec(Path(path).resolve().read_text(), ns)
+    return ns["BONE_MAP"]
 
 
 def depth(bone):

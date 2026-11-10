@@ -13,6 +13,9 @@ cd GVHMR
 # 2. Python env. GVHMR targets Python 3.10. If you use conda:
 #    conda create -y -n gvhmr python=3.10 && conda activate gvhmr
 # Install the package and its deps (PyTorch per GVHMR's requirements.txt).
+# If chumpy fails to build ("No module named 'pip'"), run
+#   pip install --no-build-isolation chumpy
+# first and retry — see AWS.md "Gotchas" #3.
 pip install -r requirements.txt
 pip install -e .
 # NOTE: DPVO is NOT required — GVHMR uses its built-in SimpleVO by default, and
@@ -29,6 +32,9 @@ if [ ! -f inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt ]; then
         -O inputs/checkpoints
     # gdown --folder may nest under a folder name; verify the tree matches:
     #   inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt  (move files up if nested)
+    # Drive rate-limits repeated pulls. If gdown fails, use the Hugging Face mirror
+    # (what aws/launch.sh does): huggingface_hub.snapshot_download(
+    #   repo_id="camenduru/GVHMR", local_dir="inputs/checkpoints")
 fi
 
 # 4. Body model — SMPL-X NEUTRAL, license-gated (manual download).
@@ -36,7 +42,7 @@ mkdir -p inputs/checkpoints/body_models/smplx
 if [ ! -f inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz ]; then
     echo ""
     echo "================================================================"
-    echo "  ACTION REQUIRED (2/2): SMPL-X body model"
+    echo "  ACTION REQUIRED: SMPL-X body model"
     echo "  Register at https://smpl-x.is.tue.mpg.de/  (free account)"
     echo "  Download SMPL-X v1.1 and place the neutral .npz at:"
     echo "    GVHMR/inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz"

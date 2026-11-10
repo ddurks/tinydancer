@@ -19,7 +19,14 @@ grants you **no rights** to any of them.
 | **ViTPose** | Bundled by GVHMR | <https://github.com/ViTAE-Transformer/ViTPose> |
 | **YOLOv8** (Ultralytics) | Person detector | <https://github.com/ultralytics/ultralytics> — AGPL-3.0 (commercial use requires an Ultralytics license). |
 | **Checkpoint mirror** (`camenduru/GVHMR`) | Convenience mirror of the above weights | <https://huggingface.co/camenduru/GVHMR> — weights remain under their original licenses. |
-| **Rokoko Studio Live (Blender addon)** | Optional retargeting helper | <https://github.com/Rokoko/rokoko-studio-live-blender> |
+| **Rokoko Studio Live (Blender addon)** | Optional retargeting helper (alternative to `retarget.py`) | <https://github.com/Rokoko/rokoko-studio-live-blender> |
+
+The helper scripts also use common open-source libraries you install yourself
+(not bundled): NumPy and SciPy (BSD-3-Clause), PyTorch (BSD-3-Clause, to read
+GVHMR's `.pt`), librosa (ISC) and soundfile (BSD-3-Clause) in `dance_cues.py` /
+`loop_clip.py`, OpenCV (`opencv-python`, Apache-2.0) in `handheld.py` and
+`run_pipeline.py`, and the FFmpeg command-line tool (LGPL/GPL depending on build)
+for audio/video I/O. The Blender scripts run inside Blender (GPL).
 
 **Bottom line:** this repo's code is free to use under MIT, but the SMPL-X and
 GVHMR ecosystems are largely **non-commercial research** licensed. If you intend

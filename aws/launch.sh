@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Hands-off AWS run, driven from your LOCAL machine (Git Bash, AWS CLI configured).
+# Hands-off AWS run, driven from your LOCAL machine (macOS/Linux bash or Git Bash,
+# AWS CLI configured).
 #
 # Run from the repo root:   bash aws/launch.sh
 #
 # It uploads your local inputs to S3, then launches a GPU instance whose user-data
 # installs GVHMR, runs your clip, uploads <clip-stem>.bvh back to S3, and SELF-
-# TERMINATES. Poll/download commands are printed at the end.
+# TERMINATES. It then follows run.log live and downloads the BVH when it lands.
 #
 # Default clip is buyit.mp4. To run a different one:
 #   VIDEO_PATH=./blackandwhite.mp4 bash aws/launch.sh
@@ -61,9 +62,8 @@ watch_run() {
       echo " DONE — $OUT_BVH is ready. Downloading to $(pwd) ..."
       aws s3 cp "s3://$bucket/$OUT_BVH" . || true
       echo ""
-      echo " Build the Blender armature locally:"
-      echo '   "/c/Program Files/Blender Foundation/Blender 5.1/blender.exe" \'
-      echo "       --background --python blender_import.py -- $OUT_BVH ${VIDEO_STEM}.blend"
+      echo " Build the Blender armature locally (blender = your Blender executable):"
+      echo "   blender --background --python blender_import.py -- $OUT_BVH ${VIDEO_STEM}.blend"
       echo "==================================================================="
       return 0
     fi
@@ -81,7 +81,7 @@ watch_run() {
       echo ""
       echo "==================================================================="
       echo " Instance terminated WITHOUT producing $OUT_BVH — see log above for the error."
-      echo " Raw inference output (if any) preserved at: s3://$bucket/hmr4d_results.pt"
+      echo " Raw inference output (if any) preserved at: s3://$bucket/${VIDEO_STEM}.hmr4d_results.pt"
       echo "==================================================================="
       return 1
     fi
@@ -140,7 +140,7 @@ fi
 echo "Using AMI: $AMI"
 
 # --- user-data that runs on the box at boot ----------------------------------
-# Quoted heredoc (no local expansion); BUCKET/REGION injected via sed below.
+# Quoted heredoc (no local expansion); the __PLACEHOLDERS__ are filled by sed below.
 # Written inside the repo (not /tmp) so the Windows aws.exe can read it via a
 # relative file:// path when run from Git Bash.
 UD="aws/_userdata.gen.sh"
@@ -196,7 +196,7 @@ python -c "import pytorch3d" 2>/dev/null || \
 
 mkdir -p inputs/checkpoints inputs/checkpoints/body_models/smplx inputs/checkpoints/yolo
 
-# --- checkpoints: S3 cache first, else Google Drive (resilient) -------------
+# --- checkpoints: S3 cache first, else the Hugging Face mirror --------------
 if aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1; then
   echo "Using cached checkpoints from S3."
   aws s3 cp "s3://$BUCKET/checkpoints.tar.gz" /tmp/ck.tgz
@@ -223,10 +223,10 @@ fi
 # Verify the checkpoints the demo actually needs; fail loudly (-> run.log) if not.
 test -f inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt || { echo "MISSING gvhmr ckpt"; exit 1; }
 ls inputs/checkpoints/hmr2/*.ckpt   >/dev/null 2>&1 || { echo "MISSING hmr2 ckpt"; exit 1; }
-ls inputs/checkpoints/vitpose/*.pth >/dev/null 2>&1 || { echo "MISSING vitpose ckpt (Drive rate-limited; rerun later or pre-stage to S3)"; exit 1; }
+ls inputs/checkpoints/vitpose/*.pth >/dev/null 2>&1 || { echo "MISSING vitpose ckpt (pre-stage checkpoints.tar.gz to S3 if the mirror lacks it)"; exit 1; }
 test -f inputs/checkpoints/yolo/yolov8x.pt || { echo "MISSING yolo"; exit 1; }
 
-# Cache the complete set to S3 so future runs skip Google Drive entirely.
+# Cache the complete set to S3 so future runs skip the download entirely.
 aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1 || {
   tar czf /tmp/ck.tgz -C inputs/checkpoints gvhmr hmr2 vitpose yolo dpvo 2>/dev/null || \
   tar czf /tmp/ck.tgz -C inputs/checkpoints gvhmr hmr2 vitpose yolo
