@@ -61,8 +61,13 @@ when its script ends — success *or* failure. Two mechanisms guarantee it:
 - a `trap … shutdown -h now` in the boot script (runs on any exit, incl. `set -e` aborts).
 - EBS is `DeleteOnTermination=true`, so no orphaned volumes either.
 
-Cost is ~**$1/hr** for `g5.xlarge` (or ~$0.53/hr `g4dn.xlarge`); a run is 15–25 min,
-so **well under $1 each**, even across several debug iterations.
+Cost is ~**$1/hr** for `g5.xlarge` on-demand (or ~$0.53/hr `g4dn.xlarge`), and about half
+that on spot, which `launch.sh` asks for first (`SPOT=0` for on-demand only). A run on the
+stock image installs GVHMR first and takes ~40 min; on the **prebuilt image** (any AMI you
+own tagged `Name=tinydancer-gvhmr`, used automatically; `FRESH=1` to skip it) it is
+~8–10 min, so a run is roughly **$0.07–0.15**. The prebuilt image's snapshot costs
+~$0.05/GB-month (a few dollars a month); see the `launch.sh` header to rebuild it, and
+deregister old ones (and delete their snapshots) when you replace them.
 
 **Audit anytime** (should be empty once a run finishes):
 ```bash

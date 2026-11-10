@@ -11,6 +11,19 @@
 # Default clip is buyit.mp4. To run a different one:
 #   VIDEO_PATH=./blackandwhite.mp4 bash infra/aws/launch.sh
 #
+# Faster/cheaper by default: it boots your own prebuilt image (tagged
+# Name=tinydancer-gvhmr: GVHMR + checkpoints already installed, ~8 min a run
+# instead of ~40) when one exists, and asks for a spot instance (about half
+# price), falling back to on-demand if spot is refused.
+#   FRESH=1   ignore the prebuilt image and install from scratch
+#   SPOT=0    on-demand only
+# To (re)make the prebuilt image: run once with FRESH=1, and while it is past
+# the install (run.log shows `python run_pipeline.py`), from your machine:
+#   aws ec2 create-image --instance-id <id> --no-reboot --name tinydancer-gvhmr-<date> \
+#     --tag-specifications 'ResourceType=image,Tags=[{Key=Name,Value=tinydancer-gvhmr}]' \
+#                          'ResourceType=snapshot,Tags=[{Key=Name,Value=tinydancer-gvhmr}]'
+# Deregister old images (and delete their snapshots) to stop paying for them.
+#
 # The ONLY manual prerequisite (license, cannot be scripted): download
 # SMPLX_NEUTRAL.npz once from https://smpl-x.is.tue.mpg.de/ and put its path below.
 set -euo pipefail
@@ -128,8 +141,16 @@ if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
   echo "Waiting for IAM propagation ..."; sleep 20
 fi
 
-# --- latest Deep Learning AMI (PyTorch, Ubuntu 22.04) ------------------------
-AMI=$(aws ec2 describe-images --region "$REGION" --owners amazon \
+# --- AMI: our prebuilt GVHMR image if there is one, else the stock DLAMI ------
+AMI=""
+if [ "${FRESH:-0}" != 1 ]; then
+  AMI=$(aws ec2 describe-images --region "$REGION" --owners self \
+    --filters "Name=tag:Name,Values=tinydancer-gvhmr" "Name=state,Values=available" \
+    --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' --output text)
+  [ "$AMI" = "None" ] && AMI=""
+  [ -n "$AMI" ] && echo "Using prebuilt GVHMR image: $AMI"
+fi
+[ -n "$AMI" ] || AMI=$(aws ec2 describe-images --region "$REGION" --owners amazon \
   --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch*Ubuntu 22.04*" \
             "Name=state,Values=available" \
   --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' --output text)
@@ -169,6 +190,14 @@ trap finish EXIT
 # heartbeat: push the log to S3 every 60s so you can watch progress live
 ( while true; do sleep 60; aws s3 cp "$LOG" "s3://$BUCKET/run.log" >/dev/null 2>&1 || true; done ) &
 
+# A prebuilt image (see the header) already has all of this; check, don't assume.
+cd /home/ubuntu
+if [ -d GVHMR ] && python -c "import hmr4d, pytorch3d" 2>/dev/null; then
+  echo "Prebuilt image: GVHMR already installed."
+  cd GVHMR
+  rm -rf outputs/demo/*    # the image may hold a previous clip's (partial) outputs
+else
+
 # This AMI's system Python is 3.10 (matches GVHMR's cp310 wheels). Just make
 # `python` resolve to it (the AMI only ships `python3`), and pip into it.
 ln -sf "$(command -v python3)" /usr/local/bin/python
@@ -193,11 +222,14 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 python -c "import pytorch3d" 2>/dev/null || \
   FORCE_CUDA=1 python -m pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+fi
 
 mkdir -p inputs/checkpoints inputs/checkpoints/body_models/smplx inputs/checkpoints/yolo
 
-# --- checkpoints: S3 cache first, else the Hugging Face mirror --------------
-if aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1; then
+# --- checkpoints: already on a prebuilt image, else S3 cache, else Hugging Face
+if [ -f inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt ]; then
+  echo "Checkpoints already present."
+elif aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1; then
   echo "Using cached checkpoints from S3."
   aws s3 cp "s3://$BUCKET/checkpoints.tar.gz" /tmp/ck.tgz
   tar xzf /tmp/ck.tgz -C inputs/checkpoints
@@ -255,9 +287,15 @@ sed -e "s|__BUCKET__|$BUCKET|g" -e "s|__REGION__|$REGION|g" \
     -e "s|__OUT_BVH__|$OUT_BVH|g" "$UD" > "$UD.tmp" && mv "$UD.tmp" "$UD"
 
 # --- launch (retry while IAM profile finishes propagating) -------------------
+# Spot first (about half price; a one-time request that terminates, never
+# stops, so the self-terminate guarantees are unchanged). If spot is refused —
+# no capacity, or no spot quota — the next attempt goes on-demand.
+MARKET=()
+[ "${SPOT:-1}" = 1 ] && MARKET=(--instance-market-options \
+  'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}')
 ID=""
 for i in 1 2 3 4 5; do
-  ID=$(aws ec2 run-instances --region "$REGION" \
+  ID=$(aws ec2 run-instances --region "$REGION" ${MARKET[@]+"${MARKET[@]}"} \
     --image-id "$AMI" --instance-type "$INSTANCE_TYPE" \
     --iam-instance-profile "Name=$ROLE" \
     --instance-initiated-shutdown-behavior terminate \
@@ -266,11 +304,15 @@ for i in 1 2 3 4 5; do
     --user-data "file://$UD" --count 1 \
     --query 'Instances[0].InstanceId' --output text 2>infra/aws/_run.err) && break
   echo "run-instances attempt $i failed; retrying in 15s ..."
-  cat infra/aws/_run.err; sleep 15
+  cat infra/aws/_run.err
+  if [ ${#MARKET[@]} -gt 0 ] && grep -q -i "spot\|capacity\|MaxSpotInstanceCountExceeded" infra/aws/_run.err; then
+    echo "Spot refused — falling back to on-demand."; MARKET=()
+  fi
+  sleep 15
 done
 
 echo ""
-echo "Launched instance: ${ID:-<failed>}  (installs GVHMR -> runs $VIDEO_FILE -> uploads $OUT_BVH -> self-terminates)"
+echo "Launched ${MARKET[0]:+spot }instance: ${ID:-<failed>}  (installs GVHMR -> runs $VIDEO_FILE -> uploads $OUT_BVH -> self-terminates)"
 if [ -z "${ID:-}" ] || [ "${ID:-}" = "None" ]; then
   echo "Launch failed — not watching. Check the error above."
   exit 1
