@@ -11,6 +11,12 @@
 # Default clip is buyit.mp4. To run a different one:
 #   VIDEO_PATH=./blackandwhite.mp4 bash infra/aws/launch.sh
 #
+# Several clips on one box (installs once, runs each in turn; a clip that
+# fails doesn't stop the rest):
+#   VIDEO_PATH=./a.mp4 EXTRA_VIDEOS="./b.mp4 ./c.mp4" bash infra/aws/launch.sh
+#
+# The box powers itself off after MAX_MINUTES (default 120) whatever happens.
+#
 # It asks for a spot instance first (about half price), falling back to
 # on-demand if spot is refused.
 #   SPOT=0    on-demand only
@@ -35,6 +41,8 @@ SMPLX_PATH="./SMPLX_NEUTRAL.npz"       # you downloaded this (license-gated)
 # Clip to process. Override per-run:  VIDEO_PATH=./examples/buyit.mp4 bash infra/aws/launch.sh
 VIDEO_PATH="${VIDEO_PATH:-./examples/buyit.mp4}"
 RUNPIPE_PATH="./motion/run_pipeline.py"
+EXTRA_VIDEOS="${EXTRA_VIDEOS:-}"       # more clips for the same box, space-separated
+MAX_MINUTES="${MAX_MINUTES:-120}"      # hard power-off, whatever the box is doing
 #######################################################################
 
 if [ "$BUCKET" = "tinydancer-CHANGE-ME" ]; then
@@ -50,6 +58,16 @@ OUT_BVH="${VIDEO_STEM}.bvh"
 # Per clip too, so two clips can run at once without trampling each other.
 RUN_LOG="${VIDEO_STEM}.run.log"
 WATCH_TMP="${TMPDIR:-/tmp}/td_watch_${VIDEO_STEM}.log"
+# Every clip this box runs, main first. The run is finished once the last
+# clip's BVH lands (or the box is gone); each BVH is fetched then.
+ALL_FILES="$VIDEO_FILE"
+for v in $EXTRA_VIDEOS; do ALL_FILES="$ALL_FILES $(basename "$v")"; done
+LAST_FILE="${ALL_FILES##* }"
+LAST_BVH="${LAST_FILE%.*}.bvh"
+fetch_bvhs() {
+  local f
+  for f in $ALL_FILES; do aws s3 cp "s3://$1/${f%.*}.bvh" . 2>/dev/null || echo " (no ${f%.*}.bvh)"; done
+}
 
 # --- live watcher: follow <clip>.run.log until the BVH lands, then download it ---
 # Re-watch an in-progress run without relaunching:  WATCH_ONLY=1 bash infra/aws/launch.sh
@@ -76,12 +94,12 @@ watch_run() {
         printf '\r\033[K%s' "$(python3 "$(dirname "$0")/progress.py" "$WATCH_TMP" --since "$since")"
       fi
     fi
-    if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
+    if aws s3 ls "s3://$bucket/$LAST_BVH" >/dev/null 2>&1; then
       [ "${VERBOSE:-0}" = 1 ] || printf '\r\033[K%s\n' "$(python3 "$(dirname "$0")/progress.py" "$WATCH_TMP" --since "$since" --done)"
       echo ""
       echo "==================================================================="
-      echo " DONE — $OUT_BVH is ready. Downloading to $(pwd) ..."
-      aws s3 cp "s3://$bucket/$OUT_BVH" . || true
+      echo " DONE — $LAST_BVH is ready. Downloading BVHs to $(pwd) ..."
+      fetch_bvhs "$bucket"
       echo ""
       echo " Build the Blender armature locally (blender = your Blender executable):"
       echo "   blender --background --python blender/blender_import.py -- $OUT_BVH ${VIDEO_STEM}.blend"
@@ -100,12 +118,13 @@ watch_run() {
           echo ""; echo "--- last 40 lines of $RUN_LOG ---"; tr '\r' '\n' < "$WATCH_TMP" | grep -v '^\s*$' | tail -40
         fi
       fi
-      if aws s3 ls "s3://$bucket/$OUT_BVH" >/dev/null 2>&1; then
-        aws s3 cp "s3://$bucket/$OUT_BVH" . || true; return 0
+      if aws s3 ls "s3://$bucket/$LAST_BVH" >/dev/null 2>&1; then
+        fetch_bvhs "$bucket"; return 0
       fi
+      fetch_bvhs "$bucket"
       echo ""
       echo "==================================================================="
-      echo " Instance terminated WITHOUT producing $OUT_BVH — see log above for the error."
+      echo " Instance terminated WITHOUT producing $LAST_BVH — see log above for the error."
       echo " Raw inference output (if any) preserved at: s3://$bucket/${VIDEO_STEM}.hmr4d_results.pt"
       echo "==================================================================="
       return 1
@@ -133,12 +152,13 @@ aws s3 mb "s3://$BUCKET" --region "$REGION" 2>/dev/null || true
 echo "Uploading inputs to s3://$BUCKET ..."
 aws s3 cp "$SMPLX_PATH"   "s3://$BUCKET/SMPLX_NEUTRAL.npz"
 aws s3 cp "$VIDEO_PATH"   "s3://$BUCKET/$VIDEO_FILE"
+for v in $EXTRA_VIDEOS; do aws s3 cp "$v" "s3://$BUCKET/$(basename "$v")"; done
 aws s3 cp "$RUNPIPE_PATH" "s3://$BUCKET/run_pipeline.py"
 
 # Clear stale outputs for THIS clip from a previous run (keep the
 # checkpoints.tar.gz cache and other clips' BVHs).
 aws s3 rm "s3://$BUCKET/$RUN_LOG" 2>/dev/null || true
-aws s3 rm "s3://$BUCKET/$OUT_BVH" 2>/dev/null || true
+for f in $ALL_FILES; do aws s3 rm "s3://$BUCKET/${f%.*}.bvh" 2>/dev/null || true; done
 
 # --- IAM role so the instance can read/write the bucket ----------------------
 ROLE="tinydancer-ec2-role"
@@ -181,7 +201,10 @@ REGION="__REGION__"
 VIDEO_FILE="__VIDEO_FILE__"
 VIDEO_STEM="__VIDEO_STEM__"
 OUT_BVH="__OUT_BVH__"
+ALL_FILES="__ALL_FILES__"
 export AWS_DEFAULT_REGION="$REGION"
+# Last-resort cost guard: power off (-> terminate) after MAX_MINUTES no matter what.
+( sleep $((__MAX_MINUTES__ * 60)); shutdown -h now ) &
 LOG=/var/log/tinydancer.log
 exec > >(tee "$LOG") 2>&1
 
@@ -218,10 +241,31 @@ python -m pip install torch==2.3.0 torchvision==0.18.0 --index-url https://downl
 # fails under PEP517 build isolation. Install it first WITHOUT isolation so it
 # sees the real pip; then the requirements pass finds it satisfied and skips it.
 python -m pip install --no-build-isolation chumpy
-python -m pip install -r requirements.txt
+# requirements.txt pins pytorch3d to a prebuilt wheel on Meta's file host; when
+# that host is down (its TLS cert lapsed 2026-11-11) the whole pass fails. Take
+# it out of the pass and try the wheel on its own. Failing that, use a wheel a
+# previous box built (kit/pytorch3d/ in the bucket), else build from GitHub
+# (~25 min; no build isolation, the build imports the torch installed above)
+# and leave the wheel in the bucket for the next box.
+grep -v '^pytorch3d' requirements.txt > /tmp/requirements.txt
+python -m pip install -r /tmp/requirements.txt
 python -m pip install -e .
-python -c "import pytorch3d" 2>/dev/null || \
-  FORCE_CUDA=1 python -m pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+python -m pip install "$(grep -o 'https://dl.fbaipublicfiles[^ ]*' requirements.txt)" || true
+if ! python -c "import pytorch3d" 2>/dev/null; then
+  mkdir -p /tmp/p3d
+  aws s3 cp "s3://$BUCKET/kit/pytorch3d/" /tmp/p3d/ --recursive || true
+  if ls /tmp/p3d/pytorch3d-*.whl >/dev/null 2>&1; then
+    python -m pip install /tmp/p3d/pytorch3d-*.whl
+  else
+    FORCE_CUDA=1 python -m pip wheel --no-deps --no-build-isolation -w /tmp/p3d \
+      "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+    python -m pip install /tmp/p3d/pytorch3d-*.whl
+    aws s3 cp /tmp/p3d/ "s3://$BUCKET/kit/pytorch3d/" --recursive \
+      --exclude '*' --include 'pytorch3d-*.whl' || true
+  fi
+fi
+# GVHMR imports yacs, which only ever arrived via the 0.7.6 wheel's fvcore dep.
+python -m pip install fvcore
 
 mkdir -p inputs/checkpoints inputs/checkpoints/body_models/smplx inputs/checkpoints/yolo
 
@@ -264,7 +308,6 @@ aws s3 ls "s3://$BUCKET/checkpoints.tar.gz" >/dev/null 2>&1 || {
 
 aws s3 cp "s3://$BUCKET/SMPLX_NEUTRAL.npz" inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz
 aws s3 cp "s3://$BUCKET/run_pipeline.py" run_pipeline.py
-aws s3 cp "s3://$BUCKET/$VIDEO_FILE" "$VIDEO_FILE"
 
 # Your clip -> BVH in static-camera mode (-s, run_pipeline's default: no --moving-cam).
 # SimpleVO needs strong inter-frame parallax + texture to estimate camera motion;
@@ -274,14 +317,24 @@ aws s3 cp "s3://$BUCKET/$VIDEO_FILE" "$VIDEO_FILE"
 # which saves the .pt then crashes on its SMPL-only render step — run_pipeline
 # tolerates that and converts the saved .pt.) Inference is already validated, so no
 # separate tennis sanity check.
-python run_pipeline.py "$VIDEO_FILE" --out "$OUT_BVH"
-aws s3 cp "$OUT_BVH" "s3://$BUCKET/$OUT_BVH"
-echo "DONE: s3://$BUCKET/$OUT_BVH"
+for f in $ALL_FILES; do
+  stem="${f%.*}"
+  aws s3 cp "s3://$BUCKET/$f" "$f"
+  if python run_pipeline.py "$f" --out "$stem.bvh"; then
+    aws s3 cp "$stem.bvh" "s3://$BUCKET/$stem.bvh"
+    echo "DONE: s3://$BUCKET/$stem.bvh"
+  else
+    echo "FAILED: $f (continuing with the rest)"
+  fi
+  pt="outputs/demo/$stem/hmr4d_results.pt"
+  [ -f "$pt" ] && aws s3 cp "$pt" "s3://$BUCKET/$stem.hmr4d_results.pt" || true
+done
 USERDATA
 # Write via a temp file rather than `sed -i`, whose syntax differs on macOS (BSD sed).
 sed -e "s|__BUCKET__|$BUCKET|g" -e "s|__REGION__|$REGION|g" \
     -e "s|__VIDEO_FILE__|$VIDEO_FILE|g" -e "s|__VIDEO_STEM__|$VIDEO_STEM|g" \
-    -e "s|__OUT_BVH__|$OUT_BVH|g" "$UD" > "$UD.tmp" && mv "$UD.tmp" "$UD"
+    -e "s|__OUT_BVH__|$OUT_BVH|g" -e "s|__ALL_FILES__|$ALL_FILES|g" \
+    -e "s|__MAX_MINUTES__|$MAX_MINUTES|g" "$UD" > "$UD.tmp" && mv "$UD.tmp" "$UD"
 
 # --- launch (retry while IAM profile finishes propagating) -------------------
 # Spot first (about half price; a one-time request that terminates, never
@@ -309,7 +362,7 @@ for i in 1 2 3 4 5; do
 done
 
 echo ""
-echo "Launched ${MARKET[0]:+spot }instance: ${ID:-<failed>}  (installs GVHMR -> runs $VIDEO_FILE -> uploads $OUT_BVH -> self-terminates)"
+echo "Launched ${MARKET[0]:+spot }instance: ${ID:-<failed>}  (installs GVHMR -> runs $ALL_FILES -> uploads BVHs -> self-terminates)"
 if [ -z "${ID:-}" ] || [ "${ID:-}" = "None" ]; then
   echo "Launch failed — not watching. Check the error above."
   exit 1
